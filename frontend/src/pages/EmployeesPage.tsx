@@ -17,6 +17,7 @@ export default function EmployeesPage() {
     phone: '',
     email: '',
     notes: '',
+    hourlyRate: '',
     isActive: true,
   });
 
@@ -38,7 +39,7 @@ export default function EmployeesPage() {
 
   const openCreate = () => {
     setEditingId(null);
-    setForm({ name: '', jobTitle: '', phone: '', email: '', notes: '', isActive: true });
+    setForm({ name: '', jobTitle: '', phone: '', email: '', notes: '', hourlyRate: '', isActive: true });
     setError('');
     setShowForm(true);
   };
@@ -51,6 +52,7 @@ export default function EmployeesPage() {
       phone: row.phone || '',
       email: row.email || '',
       notes: row.notes || '',
+      hourlyRate: row.hourlyRate != null ? String(row.hourlyRate) : '',
       isActive: row.isActive !== false,
     });
     setError('');
@@ -66,6 +68,7 @@ export default function EmployeesPage() {
       phone: form.phone.trim() || null,
       email: form.email.trim() || null,
       notes: form.notes.trim() || null,
+      hourlyRate: form.hourlyRate.trim() === '' ? null : Number(form.hourlyRate),
       isActive: form.isActive,
     };
     try {
@@ -129,6 +132,7 @@ export default function EmployeesPage() {
               <th className="text-left p-3">Code</th>
               <th className="text-left p-3">Name</th>
               <th className="text-left p-3">Job title</th>
+              <th className="text-left p-3">Hourly rate</th>
               <th className="text-left p-3">Phone</th>
               <th className="text-left p-3">Status</th>
               <th className="text-left p-3">Created</th>
@@ -137,14 +141,15 @@ export default function EmployeesPage() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} className="p-6 text-center text-gray-400">Loading...</td></tr>
+              <tr><td colSpan={8} className="p-6 text-center text-gray-400">Loading...</td></tr>
             ) : employees.length === 0 ? (
-              <tr><td colSpan={7} className="p-6 text-center text-gray-400">No employees yet</td></tr>
+              <tr><td colSpan={8} className="p-6 text-center text-gray-400">No employees yet</td></tr>
             ) : employees.map((row) => (
               <tr key={row.id} className="border-t">
                 <td className="p-3 font-mono text-xs">{row.employeeCode}</td>
                 <td className="p-3 font-medium">{row.name}</td>
                 <td className="p-3">{row.jobTitle || '—'}</td>
+                <td className="p-3">{row.hourlyRate != null ? `$${Number(row.hourlyRate).toFixed(2)}` : '—'}</td>
                 <td className="p-3">{row.phone || '—'}</td>
                 <td className="p-3">
                   {row.isActive !== false ? (
@@ -185,13 +190,19 @@ export default function EmployeesPage() {
                 <input className="input" placeholder="e.g. Panel beater" value={form.jobTitle} onChange={(e) => setForm({ ...form, jobTitle: e.target.value })} />
               </div>
               <div>
+                <label className="label">Hourly rate</label>
+                <input type="number" min="0" step="0.01" className="input" placeholder="0.00" value={form.hourlyRate} onChange={(e) => setForm({ ...form, hourlyRate: e.target.value })} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
                 <label className="label">Phone</label>
                 <input className="input" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
               </div>
-            </div>
-            <div>
-              <label className="label">Email</label>
-              <input type="email" className="input" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+              <div>
+                <label className="label">Email</label>
+                <input type="email" className="input" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+              </div>
             </div>
             <div>
               <label className="label">Notes</label>

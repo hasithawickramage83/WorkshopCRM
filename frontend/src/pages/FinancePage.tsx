@@ -7,6 +7,22 @@ import { Customer, Employee, Supplier, formatCurrency, formatDate, formatStatus 
 type Tab = 'weekly' | 'collections' | 'expenses' | 'report';
 type CollectionMode = 'job' | 'additional';
 
+interface PayablePartySummary {
+  id: string;
+  kind: 'labour' | 'salary' | 'supplier' | 'outsource' | 'other' | 'unassigned' | 'employee';
+  name: string;
+  code?: string | null;
+  amount: number;
+  count: number;
+}
+
+interface PayableTypeSummary {
+  id: string;
+  label: string;
+  amount: number;
+  count: number;
+}
+
 interface WeeklySummary {
   from: string;
   to: string;
@@ -23,6 +39,8 @@ interface WeeklySummary {
   otherExpenses: number;
   totalExpenses: number;
   totalPayables: number;
+  payablesByParty?: PayablePartySummary[];
+  payablesByType?: PayableTypeSummary[];
   netProfit: number;
   isProfit: boolean;
 }
@@ -55,6 +73,7 @@ interface WeeklyDetailRow {
   paymentMethod?: string | null;
   category?: string;
   materialType?: string | null;
+  outsourceType?: string | null;
   otherType?: string | null;
   description?: string;
   entryType?: string;
@@ -66,6 +85,7 @@ interface WeeklyDetailRow {
   supplierCode?: string | null;
   employee?: string | null;
   employeeCode?: string | null;
+  partyId?: string;
   amount?: number;
   amountPaid?: number;
   balance?: number;
@@ -86,6 +106,15 @@ interface WeeklyDetails {
   taxTotal?: number;
   cashTotal?: number;
   receivableTotal?: number;
+  byParty?: PayablePartySummary[];
+  byType?: PayableTypeSummary[];
+  partyId?: string | null;
+  party?: {
+    id: string;
+    kind: string;
+    name: string;
+    code?: string | null;
+  } | null;
 }
 
 interface CollectionJobOption {
@@ -134,6 +163,7 @@ interface ExpenseRow {
   id: string;
   category: string;
   materialType?: string | null;
+  outsourceType?: string | null;
   otherType?: string | null;
   description: string;
   amount: number;
@@ -184,6 +214,7 @@ const COLLECTION_TYPES = [
 const EXPENSE_CATEGORIES = [
   { value: 'LABOUR', label: 'Labour' },
   { value: 'MATERIAL', label: 'Material' },
+  { value: 'OUTSOURCE', label: 'Out source' },
   { value: 'OTHER', label: 'Other operating' },
 ];
 
@@ -191,6 +222,11 @@ const MATERIAL_TYPES = [
   { value: 'PAINT', label: 'Paint' },
   { value: 'PARTS', label: 'Parts' },
   { value: 'CONSUMABLES', label: 'Consumables' },
+  { value: 'OTHER', label: 'Other' },
+];
+
+const OUTSOURCE_TYPES = [
+  { value: 'MECHANIC', label: 'Mechanic' },
   { value: 'OTHER', label: 'Other' },
 ];
 
@@ -234,17 +270,60 @@ function formatCollectionType(type: string) {
   return found?.label || type;
 }
 
-function formatCategory(category: string, materialType?: string | null, otherType?: string | null) {
+function formatPayableKind(kind?: string) {
+  switch (kind) {
+    case 'labour':
+    case 'employee':
+      return 'Labour';
+    case 'salary':
+      return 'Salary';
+    case 'outsource':
+      return 'Out source';
+    case 'supplier':
+      return 'Supplier';
+    case 'other':
+      return 'Other';
+    default:
+      return 'Unassigned';
+  }
+}
+
+function formatCategory(
+  category: string,
+  materialType?: string | null,
+  otherType?: string | null,
+  outsourceType?: string | null,
+) {
   const base = EXPENSE_CATEGORIES.find((c) => c.value === category)?.label || category;
   if (category === 'MATERIAL' && materialType) {
     const mat = MATERIAL_TYPES.find((m) => m.value === materialType)?.label || materialType;
     return `${base} · ${mat}`;
+  }
+  if (category === 'OUTSOURCE' && outsourceType) {
+    const out = OUTSOURCE_TYPES.find((o) => o.value === outsourceType)?.label || outsourceType;
+    return `${base} · ${out}`;
   }
   if (category === 'OTHER' && otherType) {
     const other = OTHER_EXPENSE_TYPES.find((o) => o.value === otherType)?.label || otherType;
     return `${base} · ${other}`;
   }
   return base;
+}
+
+function formatPayableParty(row: {
+  employee?: string | null;
+  employeeCode?: string | null;
+  supplier?: string | null;
+  supplierCode?: string | null;
+  detail?: string | null;
+}) {
+  if (row.employee) {
+    return row.employeeCode ? `${row.employee} (${row.employeeCode})` : row.employee;
+  }
+  if (row.supplier) {
+    return row.supplierCode ? `${row.supplier} (${row.supplierCode})` : row.supplier;
+  }
+  return row.detail || '—';
 }
 
 export default function FinancePage() {
@@ -285,6 +364,7 @@ export default function FinancePage() {
   const [expenseForm, setExpenseForm] = useState({
     category: 'LABOUR',
     materialType: 'PARTS',
+    outsourceType: 'MECHANIC',
     otherType: 'UTILITY',
     description: '',
     amount: '',
@@ -338,13 +418,13 @@ export default function FinancePage() {
     }
   }, [from, to]);
 
-  const openWeeklyDetails = async (metric: WeeklyMetric) => {
+  const openWeeklyDetails = async (metric: WeeklyMetric, party?: string) => {
     setDetailMetric(metric);
     setDetailLoading(true);
     setDetails(null);
     setError('');
     try {
-      const res = await financeApi.weeklyDetails({ metric, from, to });
+      const res = await financeApi.weeklyDetails({ metric, from, to, party });
       setDetails(res.data.data);
     } catch (err: unknown) {
       setError((err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'Failed to load details');
@@ -352,6 +432,10 @@ export default function FinancePage() {
     } finally {
       setDetailLoading(false);
     }
+  };
+
+  const openPayablePartyDetails = (party: PayablePartySummary) => {
+    void openWeeklyDetails('payables', party.id);
   };
 
   const closeWeeklyDetails = () => {
@@ -666,6 +750,7 @@ export default function FinancePage() {
     setExpenseForm({
       category: 'OTHER',
       materialType: 'PARTS',
+      outsourceType: 'MECHANIC',
       otherType: 'UTILITY',
       description: '',
       amount: '',
@@ -692,6 +777,7 @@ export default function FinancePage() {
     setExpenseForm({
       category: row.category,
       materialType: row.materialType || 'PARTS',
+      outsourceType: row.outsourceType || 'MECHANIC',
       otherType: row.otherType || 'UTILITY',
       description: row.description,
       amount: String(row.amount),
@@ -716,17 +802,19 @@ export default function FinancePage() {
   const submitExpense = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
-    if (expenseForm.isPayable && !expenseForm.supplierId) {
+    const isWage = needsWageEmployee(expenseForm.category, expenseForm.otherType);
+    if (expenseForm.isPayable && !isWage && !expenseForm.supplierId) {
       setError('Select a supplier for payable expenses');
       return;
     }
-    if (needsWageEmployee(expenseForm.category, expenseForm.otherType) && !expenseForm.employeeId) {
+    if (isWage && !expenseForm.employeeId) {
       setError('Select the employee / labour to pay wages to');
       return;
     }
     const payload = {
       category: expenseForm.category,
       materialType: expenseForm.category === 'MATERIAL' ? expenseForm.materialType : null,
+      outsourceType: expenseForm.category === 'OUTSOURCE' ? expenseForm.outsourceType : null,
       otherType: expenseForm.category === 'OTHER' ? expenseForm.otherType : null,
       description: expenseForm.description,
       amount: Number(expenseForm.amount),
@@ -736,10 +824,8 @@ export default function FinancePage() {
       reference: expenseForm.reference || null,
       notes: expenseForm.notes || null,
       jobId: expenseForm.jobId || null,
-      supplierId: expenseForm.supplierId || null,
-      employeeId: needsWageEmployee(expenseForm.category, expenseForm.otherType)
-        ? (expenseForm.employeeId || null)
-        : null,
+      supplierId: isWage ? null : (expenseForm.supplierId || null),
+      employeeId: isWage ? (expenseForm.employeeId || null) : null,
     };
     try {
       if (editingExpenseId) {
@@ -912,6 +998,62 @@ export default function FinancePage() {
             </button>
           </div>
 
+          {(summary.payablesByParty?.length || 0) > 0 && (
+            <div className="card space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="font-semibold">Payables by party</h2>
+                <button
+                  type="button"
+                  onClick={() => openWeeklyDetails('payables')}
+                  className="text-xs text-orange-700 hover:underline"
+                >
+                  View all
+                </button>
+              </div>
+              {(summary.payablesByType?.length || 0) > 0 && (
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                  {summary.payablesByType!.map((row) => (
+                    <div key={row.id} className="rounded-lg bg-orange-50 px-3 py-2">
+                      <p className="text-xs text-orange-700">{row.label}</p>
+                      <p className="font-semibold text-orange-900">{formatCurrency(row.amount)}</p>
+                      <p className="text-[11px] text-orange-700">{row.count} item(s)</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 text-gray-500">
+                    <tr>
+                      <th className="text-left p-2">Party</th>
+                      <th className="text-left p-2">Type</th>
+                      <th className="text-right p-2">Items</th>
+                      <th className="text-right p-2">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {summary.payablesByParty!.map((party) => (
+                      <tr
+                        key={party.id}
+                        className="border-t hover:bg-orange-50/70 cursor-pointer"
+                        onClick={() => openPayablePartyDetails(party)}
+                        title="View breakdown"
+                      >
+                        <td className="p-2 font-medium text-orange-900 underline-offset-2 hover:underline">
+                          {party.name}
+                          {party.code ? <span className="text-gray-500 font-normal"> ({party.code})</span> : null}
+                        </td>
+                        <td className="p-2 text-gray-600">{formatPayableKind(party.kind)}</td>
+                        <td className="p-2 text-right text-gray-600">{party.count}</td>
+                        <td className="p-2 text-right font-semibold text-orange-900">{formatCurrency(party.amount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <button type="button" onClick={() => openWeeklyDetails('jobs_completed')} className="bg-indigo-50 rounded-lg p-4 text-left hover:ring-2 hover:ring-indigo-300 transition">
               <p className="text-sm text-indigo-700">Jobs completed</p>
@@ -996,12 +1138,73 @@ export default function FinancePage() {
                     Cash {formatCurrency(details.cashTotal || 0)}
                   </p>
                 )}
+                {details?.metric === 'payables' && details.partyId && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      className="text-xs text-orange-700 hover:underline"
+                      onClick={() => openWeeklyDetails('payables')}
+                    >
+                      ← Back to all payables
+                    </button>
+                    {details.party && (
+                      <span className="text-xs text-gray-600">
+                        {formatPayableKind(details.party.kind)}
+                        {details.party.code ? ` · ${details.party.code}` : ''}
+                        {details.total != null ? ` · ${formatCurrency(details.total)}` : ''}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
               <button type="button" onClick={closeWeeklyDetails} className="p-1 rounded hover:bg-gray-100">
                 <X className="w-5 h-5" />
               </button>
             </div>
             <div className="overflow-auto p-4">
+              {details?.metric === 'payables' && !details.partyId && (details.byParty?.length || 0) > 0 && (
+                <div className="mb-4 space-y-3">
+                  {(details.byType?.length || 0) > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {details.byType!.map((row) => (
+                        <div key={row.id} className="rounded-lg bg-orange-50 px-3 py-1.5 text-xs">
+                          <span className="text-orange-700">{row.label}: </span>
+                          <span className="font-semibold text-orange-900">{formatCurrency(row.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="overflow-x-auto border rounded-lg">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50 text-gray-500">
+                        <tr>
+                          <th className="text-left p-2">Party</th>
+                          <th className="text-left p-2">Type</th>
+                          <th className="text-right p-2">Items</th>
+                          <th className="text-right p-2">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {details.byParty!.map((party) => (
+                          <tr
+                            key={party.id}
+                            className="border-t hover:bg-orange-50/70 cursor-pointer"
+                            onClick={() => openPayablePartyDetails(party)}
+                          >
+                            <td className="p-2 text-orange-900 underline-offset-2 hover:underline">
+                              {party.name}
+                              {party.code ? <span className="text-gray-500"> ({party.code})</span> : null}
+                            </td>
+                            <td className="p-2 text-gray-600">{formatPayableKind(party.kind)}</td>
+                            <td className="p-2 text-right">{party.count}</td>
+                            <td className="p-2 text-right font-semibold text-orange-900">{formatCurrency(party.amount)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
               {detailLoading ? (
                 <p className="text-sm text-gray-500 py-8 text-center">Loading details...</p>
               ) : !details?.rows.length ? (
@@ -1070,7 +1273,7 @@ export default function FinancePage() {
                         ) : details.metric === 'labour_expenses' ? (
                           <>
                             <td className="p-2">{row.date ? formatDate(row.date) : '—'}</td>
-                            <td className="p-2">{formatCategory(row.category || '', row.materialType, row.otherType)}</td>
+                            <td className="p-2">{formatCategory(row.category || '', row.materialType, row.otherType, row.outsourceType)}</td>
                             <td className="p-2">{row.employee || '—'}</td>
                             <td className="p-2">{row.description || '—'}</td>
                             <td className="p-2 text-right font-medium">{formatCurrency(row.amount || 0)}</td>
@@ -1078,7 +1281,7 @@ export default function FinancePage() {
                         ) : details.metric === 'expenses' || details.metric === 'material_expenses' || details.metric === 'other_expenses' ? (
                           <>
                             <td className="p-2">{row.date ? formatDate(row.date) : '—'}</td>
-                            <td className="p-2">{formatCategory(row.category || '', row.materialType, row.otherType)}</td>
+                            <td className="p-2">{formatCategory(row.category || '', row.materialType, row.otherType, row.outsourceType)}</td>
                             <td className="p-2">{row.description || '—'}</td>
                             <td className="p-2">{formatMethod(row.paymentMethod)}</td>
                             <td className="p-2 text-right font-medium">{formatCurrency(row.amount || 0)}</td>
@@ -1086,8 +1289,8 @@ export default function FinancePage() {
                         ) : details.metric === 'payables' ? (
                           <>
                             <td className="p-2">{row.date ? formatDate(row.date) : '—'}</td>
-                            <td className="p-2">{formatCategory(row.category || '', row.materialType, row.otherType)}</td>
-                            <td className="p-2">{row.supplier || '—'}</td>
+                            <td className="p-2">{formatCategory(row.category || '', row.materialType, row.otherType, row.outsourceType)}</td>
+                            <td className="p-2">{formatPayableParty(row)}</td>
                             <td className="p-2">{row.description || '—'}</td>
                             <td className="p-2 text-right font-medium">{formatCurrency(row.amount || 0)}</td>
                           </>
@@ -1161,6 +1364,62 @@ export default function FinancePage() {
                   <p className="text-2xl font-bold text-orange-900">{formatCurrency(periodReport.summary.totalPayables || 0)}</p>
                 </div>
               </div>
+
+              {(periodReport.summary.payablesByParty?.length || 0) > 0 && (
+                <div className="card space-y-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <h2 className="font-semibold">Payables by party</h2>
+                    <button
+                      type="button"
+                      onClick={() => openWeeklyDetails('payables')}
+                      className="text-xs text-orange-700 hover:underline"
+                    >
+                      View all
+                    </button>
+                  </div>
+                  {(periodReport.summary.payablesByType?.length || 0) > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {periodReport.summary.payablesByType!.map((row) => (
+                        <div key={row.id} className="rounded-lg bg-orange-50 px-3 py-2 text-sm">
+                          <span className="text-orange-700">{row.label}: </span>
+                          <span className="font-semibold text-orange-900">{formatCurrency(row.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50 text-gray-500">
+                        <tr>
+                          <th className="text-left p-2">Party</th>
+                          <th className="text-left p-2">Type</th>
+                          <th className="text-right p-2">Items</th>
+                          <th className="text-right p-2">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {periodReport.summary.payablesByParty!.map((party) => (
+                          <tr
+                            key={party.id}
+                            className="border-t hover:bg-orange-50/70 cursor-pointer"
+                            onClick={() => openPayablePartyDetails(party)}
+                            title="View breakdown"
+                          >
+                            <td className="p-2 font-medium text-orange-900 underline-offset-2 hover:underline">
+                              {party.name}
+                              {party.code ? <span className="text-gray-500 font-normal"> ({party.code})</span> : null}
+                            </td>
+                            <td className="p-2 text-gray-600">{formatPayableKind(party.kind)}</td>
+                            <td className="p-2 text-right text-gray-600">{party.count}</td>
+                            <td className="p-2 text-right font-semibold text-orange-900">{formatCurrency(party.amount)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
 
               <div className="card overflow-x-auto">
                 <h2 className="font-semibold mb-3">Jobs received ({periodReport.jobsReceived.length})</h2>
@@ -1286,7 +1545,7 @@ export default function FinancePage() {
                     ) : periodReport.expenses.map((row) => (
                       <tr key={row.id} className="border-t">
                         <td className="p-2">{row.date ? formatDate(row.date) : '—'}</td>
-                        <td className="p-2">{formatCategory(row.category || '', row.materialType, row.otherType)}</td>
+                        <td className="p-2">{formatCategory(row.category || '', row.materialType, row.otherType, row.outsourceType)}</td>
                         <td className="p-2">{row.description || '—'}</td>
                         <td className="p-2">{formatMethod(row.paymentMethod)}</td>
                         <td className="p-2 text-right font-medium">{formatCurrency(row.amount || 0)}</td>
@@ -1305,7 +1564,7 @@ export default function FinancePage() {
                     <tr>
                       <th className="text-left p-2">Date</th>
                       <th className="text-left p-2">Category</th>
-                      <th className="text-left p-2">Supplier</th>
+                      <th className="text-left p-2">Payable to</th>
                       <th className="text-left p-2">Description</th>
                       <th className="text-right p-2">Amount</th>
                     </tr>
@@ -1316,8 +1575,8 @@ export default function FinancePage() {
                     ) : (periodReport.payables || []).map((row) => (
                       <tr key={row.id} className="border-t">
                         <td className="p-2">{row.date ? formatDate(row.date) : '—'}</td>
-                        <td className="p-2">{formatCategory(row.category || '', row.materialType, row.otherType)}</td>
-                        <td className="p-2">{row.supplier || '—'}</td>
+                        <td className="p-2">{formatCategory(row.category || '', row.materialType, row.otherType, row.outsourceType)}</td>
+                        <td className="p-2">{formatPayableParty(row)}</td>
                         <td className="p-2">{row.description || '—'}</td>
                         <td className="p-2 text-right font-medium text-orange-800">{formatCurrency(row.amount || 0)}</td>
                       </tr>
@@ -1426,7 +1685,7 @@ export default function FinancePage() {
               ) : expenses.map((row) => (
                 <tr key={row.id} className="border-t">
                   <td className="p-3">{formatDate(row.expenseDate)}</td>
-                  <td className="p-3">{formatCategory(row.category, row.materialType, row.otherType)}</td>
+                  <td className="p-3">{formatCategory(row.category, row.materialType, row.otherType, row.outsourceType)}</td>
                   <td className="p-3">{row.description}</td>
                   <td className="p-3">{row.employee?.name || '—'}</td>
                   <td className="p-3">{row.supplier?.name || '—'}</td>
@@ -1756,6 +2015,9 @@ export default function FinancePage() {
                     employeeId: needsWageEmployee(e.target.value, expenseForm.otherType)
                       ? expenseForm.employeeId
                       : '',
+                    supplierId: needsWageEmployee(e.target.value, expenseForm.otherType)
+                      ? ''
+                      : expenseForm.supplierId,
                   })}
                 >
                   {EXPENSE_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
@@ -1773,6 +2035,18 @@ export default function FinancePage() {
                   </select>
                 </div>
               )}
+              {expenseForm.category === 'OUTSOURCE' && (
+                <div>
+                  <label className="label">Expense type</label>
+                  <select
+                    className="input"
+                    value={expenseForm.outsourceType}
+                    onChange={(e) => setExpenseForm({ ...expenseForm, outsourceType: e.target.value })}
+                  >
+                    {OUTSOURCE_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </div>
+              )}
               {expenseForm.category === 'OTHER' && (
                 <div>
                   <label className="label">Expense type</label>
@@ -1785,6 +2059,9 @@ export default function FinancePage() {
                         employeeId: needsWageEmployee(expenseForm.category, e.target.value)
                           ? expenseForm.employeeId
                           : '',
+                        supplierId: needsWageEmployee(expenseForm.category, e.target.value)
+                          ? ''
+                          : expenseForm.supplierId,
                       })}
                     >
                       {OTHER_EXPENSE_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -1927,13 +2204,14 @@ export default function FinancePage() {
                 </span>
               </span>
             </label>
+            {!needsWageEmployee(expenseForm.category, expenseForm.otherType) && (
             <div>
               <label className="label">
                 Supplier {expenseForm.isPayable ? <span className="text-rose-600">*</span> : <span className="text-gray-400 font-normal">(optional)</span>}
               </label>
               <select
                 className="input"
-                required={expenseForm.isPayable}
+                required={expenseForm.isPayable && !needsWageEmployee(expenseForm.category, expenseForm.otherType)}
                 value={expenseForm.supplierId}
                 onChange={(e) => setExpenseForm({ ...expenseForm, supplierId: e.target.value })}
               >
@@ -1948,6 +2226,7 @@ export default function FinancePage() {
                 <p className="text-xs text-orange-700 mt-1">No suppliers yet — register one under Suppliers first.</p>
               )}
             </div>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="label">{expenseForm.isPayable ? 'Due / method' : 'Paid by'}</label>

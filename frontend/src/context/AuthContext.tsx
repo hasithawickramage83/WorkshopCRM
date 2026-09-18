@@ -58,6 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       { key: 'customers' as const, path: '/customers' },
       { key: 'suppliers' as const, path: '/suppliers' },
       { key: 'employees' as const, path: '/employees' },
+      { key: 'labour-hours' as const, path: '/labour-hours' },
       { key: 'vehicles' as const, path: '/vehicles' },
       { key: 'leads' as const, path: '/leads' },
       { key: 'jobs' as const, path: '/jobs' },

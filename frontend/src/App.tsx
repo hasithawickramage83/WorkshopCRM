@@ -7,6 +7,7 @@ import DashboardPage from './pages/DashboardPage';
 import CustomersPage from './pages/CustomersPage';
 import SuppliersPage from './pages/SuppliersPage';
 import EmployeesPage from './pages/EmployeesPage';
+import LabourHoursPage from './pages/LabourHoursPage';
 import VehiclesPage from './pages/VehiclesPage';
 import LeadsPage from './pages/LeadsPage';
 import JobsPage from './pages/JobsPage';
@@ -93,6 +94,7 @@ function StaffRoutes() {
       <Route path="/customers" element={<ProtectedRoute page="customers"><CustomersPage /></ProtectedRoute>} />
       <Route path="/suppliers" element={<ProtectedRoute page="suppliers"><SuppliersPage /></ProtectedRoute>} />
       <Route path="/employees" element={<ProtectedRoute page="employees"><EmployeesPage /></ProtectedRoute>} />
+      <Route path="/labour-hours" element={<ProtectedRoute page="labour-hours"><LabourHoursPage /></ProtectedRoute>} />
       <Route path="/vehicles" element={<ProtectedRoute page="vehicles"><VehiclesPage /></ProtectedRoute>} />
       <Route path="/leads" element={<ProtectedRoute page="leads"><LeadsPage /></ProtectedRoute>} />
       <Route path="/jobs" element={<ProtectedRoute page="jobs"><JobsPage /></ProtectedRoute>} />

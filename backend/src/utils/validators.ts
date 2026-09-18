@@ -250,8 +250,9 @@ export const updateAmountPaidSchema = z.object({
 });
 
 export const expenseSchema = z.object({
-  category: z.enum(['LABOUR', 'MATERIAL', 'OTHER']),
+  category: z.enum(['LABOUR', 'MATERIAL', 'OUTSOURCE', 'OTHER']),
   materialType: z.enum(['PAINT', 'PARTS', 'CONSUMABLES', 'OTHER']).optional().nullable(),
+  outsourceType: z.enum(['MECHANIC', 'OTHER']).optional().nullable(),
   otherType: z.enum([
     'UTILITY', 'RENT', 'SALARY', 'GOOGLE', 'FUEL', 'INTERNET',
     'INSURANCE', 'MARKETING', 'SOFTWARE', 'BANK_FEES', 'OFFICE', 'OTHER',
@@ -285,7 +286,19 @@ export const employeeSchema = z.object({
   phone: z.string().max(50).optional().nullable(),
   email: z.string().email().optional().or(z.literal('')).nullable(),
   notes: z.string().max(1000).optional().nullable(),
+  hourlyRate: z.number().min(0).max(10000).optional().nullable(),
   isActive: z.boolean().optional(),
+});
+
+export const labourHoursWeekSchema = z.object({
+  weekStart: z.string().min(1),
+  rows: z.array(z.object({
+    employeeId: z.string().uuid(),
+    hours: z.number().min(0).max(168),
+    workedDays: z.number().int().min(0).max(7).optional().default(0),
+    hourlyRate: z.number().min(0).max(10000).optional().nullable(),
+    notes: z.string().max(1000).optional().nullable(),
+  })).min(1).max(200),
 });
 
 export const jobCollectionSchema = z.object({

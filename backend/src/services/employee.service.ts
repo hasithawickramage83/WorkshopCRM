@@ -1,7 +1,16 @@
 import prisma from '../utils/prisma';
-import { generateCode, parsePagination, softDeleteFilter } from '../utils/helpers';
+import { generateCode, parsePagination, softDeleteFilter, toNumber } from '../utils/helpers';
 import { AppError } from '../utils/response';
 import { Prisma } from '@prisma/client';
+
+type EmployeeRow = Prisma.EmployeeGetPayload<object>;
+
+function mapEmployee(employee: EmployeeRow) {
+  return {
+    ...employee,
+    hourlyRate: employee.hourlyRate == null ? null : toNumber(employee.hourlyRate),
+  };
+}
 
 export class EmployeeService {
   async list(query: { page?: string; limit?: string; search?: string; activeOnly?: string }) {
@@ -31,7 +40,7 @@ export class EmployeeService {
       prisma.employee.count({ where }),
     ]);
 
-    return { employees, total, page, limit };
+    return { employees: employees.map(mapEmployee), total, page, limit };
   }
 
   async getById(id: string) {
@@ -39,7 +48,7 @@ export class EmployeeService {
       where: { id, ...softDeleteFilter() },
     });
     if (!employee) throw new AppError(404, 'Employee not found', 'NOT_FOUND');
-    return employee;
+    return mapEmployee(employee);
   }
 
   async create(data: {
@@ -48,9 +57,10 @@ export class EmployeeService {
     phone?: string | null;
     email?: string | null;
     notes?: string | null;
+    hourlyRate?: number | null;
     isActive?: boolean;
   }, userId?: string) {
-    return prisma.employee.create({
+    const employee = await prisma.employee.create({
       data: {
         employeeCode: generateCode('EM'),
         name: data.name.trim(),
@@ -58,10 +68,12 @@ export class EmployeeService {
         phone: data.phone?.trim() || null,
         email: data.email?.trim() || null,
         notes: data.notes?.trim() || null,
+        hourlyRate: data.hourlyRate == null ? null : data.hourlyRate,
         isActive: data.isActive !== undefined ? !!data.isActive : true,
         createdById: userId,
       },
     });
+    return mapEmployee(employee);
   }
 
   async update(id: string, data: {
@@ -70,10 +82,11 @@ export class EmployeeService {
     phone?: string | null;
     email?: string | null;
     notes?: string | null;
+    hourlyRate?: number | null;
     isActive?: boolean;
   }, userId?: string) {
     await this.getById(id);
-    return prisma.employee.update({
+    const employee = await prisma.employee.update({
       where: { id },
       data: {
         ...(data.name !== undefined ? { name: data.name.trim() } : {}),
@@ -81,10 +94,12 @@ export class EmployeeService {
         ...(data.phone !== undefined ? { phone: data.phone?.trim() || null } : {}),
         ...(data.email !== undefined ? { email: data.email?.trim() || null } : {}),
         ...(data.notes !== undefined ? { notes: data.notes?.trim() || null } : {}),
+        ...(data.hourlyRate !== undefined ? { hourlyRate: data.hourlyRate } : {}),
         ...(data.isActive !== undefined ? { isActive: !!data.isActive } : {}),
         updatedById: userId,
       },
     });
+    return mapEmployee(employee);
   }
 
   async delete(id: string, userId?: string) {

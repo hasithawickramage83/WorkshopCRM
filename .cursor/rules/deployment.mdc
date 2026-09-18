@@ -1,0 +1,110 @@
+---
+description: How to deploy Ceylon Automobile CRM to production (DigitalOcean)
+alwaysApply: true
+---
+
+# Production deployment
+
+Live site: https://csm.ceylonautomobile.co.nz  
+Server: `root@170.64.179.199` · app dir `/opt/ceylon-crm`  
+SSH: `-i "$env:USERPROFILE\.ssh\id_rsa"`
+
+## Preferred deploy (avoid server OOM)
+
+Do **not** run Vite/`npm run build` on the server — it OOMs. Build frontend locally, rebuild backend in Docker, copy frontend dist into nginx.
+
+```powershell
+# 1) Local frontend build
+cd c:\CeylonAutomobile\CRM\frontend; npm run build
+
+# 2) Package + upload
+cd c:\CeylonAutomobile\CRM
+tar -czf "$env:TEMP\csm-crm-be.tar.gz" -C backend --exclude=node_modules --exclude=dist --exclude=tmp-*.js .
+tar -czf "$env:TEMP\csm-crm-fe-dist.tar.gz" -C frontend dist
+scp -i "$env:USERPROFILE\.ssh\id_rsa" "$env:TEMP\csm-crm-be.tar.gz" "$env:TEMP\csm-crm-fe-dist.tar.gz" root@170.64.179.199:/tmp/
+
+# 3) Remote apply (use ssh @' ... '@ heredoc on PowerShell)
+```
+
+Remote steps:
+
+```bash
+cd /opt/ceylon-crm/backend && tar -xzf /tmp/csm-crm-be.tar.gz
+cd /opt/ceylon-crm/frontend && rm -rf dist && tar -xzf /tmp/csm-crm-fe-dist.tar.gz
+cd /opt/ceylon-crm
+docker compose -f docker-compose.prod.yml build backend
+docker compose -f docker-compose.prod.yml up -d backend
+# Schema changes only:
+docker exec csm-crm-backend npx prisma db push --skip-generate
+docker cp /opt/ceylon-crm/frontend/dist/. csm-crm-frontend:/usr/share/nginx/html/
+curl -sf http://127.0.0.1:5020/health
+```
+
+## Rules
+
+- Frontend-only change → local `npm run build` + `docker cp` dist (skip backend rebuild).
+- Backend/schema change → rebuild backend container + `prisma db push` when schema changed.
+- Never rebuild/restart host nginx or touch SSL certs unless explicitly asked.
+- Never commit or upload `.env` / `deploy/.env.production` secrets to public remotes.
+- Containers: `csm-crm-backend`, `csm-crm-frontend` (compose file `docker-compose.prod.yml`).
+---
+description: Production deployment safety and rollback requirements
+alwaysApply: true
+---
+
+# Production Deployment Rules
+
+Whenever making, preparing, or executing changes that will be deployed to production, follow these rules strictly:
+
+1. ALWAYS preserve the currently deployed production version before deploying any changes.
+   - Never overwrite or destroy the existing production version without first creating a rollback point.
+   - The existing production version must remain recoverable after the new deployment.
+
+2. BEFORE every production deployment:
+   - Identify the exact currently deployed production version.
+   - Create a backup, snapshot, tag, release, or equivalent immutable copy of that version.
+   - Record the version/commit/release identifier so it can be restored later.
+   - Verify that the rollback copy exists and is accessible before proceeding.
+
+3. Deployments MUST be reversible.
+   - There must always be a clear way to restore the previous production version.
+   - Prefer atomic or versioned deployments where possible.
+   - Do not perform a deployment if there is no verified rollback path.
+
+4. NEVER delete the previous production version immediately after deployment.
+   - Keep the previous version available for rollback.
+   - Follow the project's existing retention policy if one exists.
+
+5. AFTER deployment:
+   - Verify that the new production version is running correctly.
+   - If the deployment fails or causes a critical issue, provide the rollback command/procedure using the preserved previous version.
+   - Do not automatically delete the previous version.
+
+6. DATABASE AND DATA CHANGES:
+   - Treat database migrations as potentially irreversible.
+   - Before production migrations, create an appropriate database backup/snapshot when supported.
+   - Prefer backward-compatible migrations so the previous application version can still run if a rollback is required.
+   - Never assume that rolling back application code automatically rolls back database changes.
+
+7. GIT:
+   - Before deployment, ensure the production commit/version is identifiable.
+   - Create a Git tag or other immutable reference for the currently deployed version when appropriate.
+   - The new deployment should also have a clear commit/release identifier.
+
+8. If the deployment process does not currently support safe rollback:
+   - STOP before deploying.
+   - Explain what is missing.
+   - Propose the safest way to create a rollback point first.
+   - Do not proceed with a destructive deployment merely because the user asked to deploy.
+
+9. Before executing production deployment commands, show:
+   - Current production version
+   - Rollback/backup version created
+   - New version being deployed
+   - Rollback procedure
+
+Production changes must always follow this principle:
+
+"Preserve the current production version first. Verify the rollback point. Then deploy the new version."
+- After deploy: tell user to hard-refresh the browser.
+

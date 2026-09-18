@@ -1,6 +1,6 @@
 import {
   LayoutDashboard, Users, Car, UserPlus, Wrench, ClipboardList, Boxes, Package,
-  Shield, FileText, Receipt, Wallet, Bot, BarChart3, Clock, UserCog, CarFront, MessageCircle, Truck, HardHat, type LucideIcon,
+  Shield, FileText, Receipt, Wallet, Bot, BarChart3, Clock, UserCog, CarFront, MessageCircle, Truck, HardHat, Timer, type LucideIcon,
 } from 'lucide-react';
 
 export type PageKey =
@@ -8,6 +8,7 @@ export type PageKey =
   | 'customers'
   | 'suppliers'
   | 'employees'
+  | 'labour-hours'
   | 'vehicles'
   | 'leads'
   | 'jobs'
@@ -37,6 +38,7 @@ export const APP_PAGES: AppPage[] = [
   { key: 'customers', path: '/customers', label: 'Customers', icon: Users },
   { key: 'suppliers', path: '/suppliers', label: 'Suppliers', icon: Truck },
   { key: 'employees', path: '/employees', label: 'Employees', icon: HardHat },
+  { key: 'labour-hours', path: '/labour-hours', label: 'Labour hours', icon: Timer },
   { key: 'vehicles', path: '/vehicles', label: 'Vehicles', icon: Car },
   { key: 'leads', path: '/leads', label: 'Leads', icon: UserPlus },
   { key: 'jobs', path: '/jobs', label: 'Jobs', icon: Wrench },

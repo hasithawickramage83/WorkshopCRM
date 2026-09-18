@@ -4,6 +4,7 @@ export const APP_PAGES = [
   { key: 'customers', path: '/customers', label: 'Customers' },
   { key: 'suppliers', path: '/suppliers', label: 'Suppliers' },
   { key: 'employees', path: '/employees', label: 'Employees' },
+  { key: 'labour-hours', path: '/labour-hours', label: 'Labour hours' },
   { key: 'vehicles', path: '/vehicles', label: 'Vehicles' },
   { key: 'leads', path: '/leads', label: 'Leads' },
   { key: 'jobs', path: '/jobs', label: 'Jobs' },

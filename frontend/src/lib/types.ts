@@ -62,8 +62,37 @@ export interface Employee {
   phone?: string | null;
   email?: string | null;
   notes?: string | null;
+  hourlyRate?: number | null;
   isActive?: boolean;
   createdAt: string;
+}
+
+export interface LabourHoursEmployee {
+  id: string;
+  employeeCode: string;
+  name: string;
+  jobTitle?: string | null;
+  hourlyRate?: number | null;
+  isActive?: boolean;
+}
+
+export interface LabourHoursEntry {
+  id: string;
+  employeeId: string;
+  weekStart: string;
+  hours: number;
+  workedDays: number;
+  hourlyRate: number;
+  totalAmount: number;
+  notes?: string | null;
+  expenseId?: string | null;
+}
+
+export interface LabourHoursWeek {
+  weekStart: string;
+  weekEnd: string;
+  employees: LabourHoursEmployee[];
+  entries: LabourHoursEntry[];
 }
 
 export interface Job {

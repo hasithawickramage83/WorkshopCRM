@@ -3,6 +3,7 @@ import {
   ExpenseCategory,
   ExpenseMaterialType,
   ExpenseOtherType,
+  ExpenseOutsourceType,
   InvoicePaymentStatus,
   Prisma,
 } from '@prisma/client';
@@ -92,6 +93,150 @@ function jobFinanceSnapshot(job: {
     paymentLabel: paymentLabel(status, balance),
     invoiceNumber: invoice?.invoiceNumber || null,
   };
+}
+
+
+type PayableExpenseLike = {
+  amount?: unknown;
+  category?: string | null;
+  otherType?: string | null;
+  employeeId?: string | null;
+  supplierId?: string | null;
+  employee?: { id: string; name: string; employeeCode?: string | null } | null;
+  supplier?: { id: string; name: string; supplierCode?: string | null } | null;
+};
+
+function getPayablePartyMeta(e: PayableExpenseLike) {
+  const isLabour = e.category === 'LABOUR';
+  const isSalary = e.category === 'OTHER' && e.otherType === 'SALARY';
+  let id: string;
+  let kind: 'labour' | 'salary' | 'supplier' | 'outsource' | 'other' | 'unassigned';
+  let name: string;
+  let code: string | null;
+
+  if (isLabour || isSalary) {
+    kind = isLabour ? 'labour' : 'salary';
+    if (e.employee?.id || e.employeeId) {
+      const empId = e.employee?.id || e.employeeId!;
+      id = `${kind}:employee:${empId}`;
+      name = e.employee?.name || 'Unknown employee';
+      code = e.employee?.employeeCode || null;
+    } else {
+      id = `${kind}:unassigned`;
+      name = isLabour ? 'Labour (no employee)' : 'Salary (no employee)';
+      code = null;
+    }
+  } else if (e.supplier?.id || e.supplierId) {
+    const supplierId = e.supplier?.id || e.supplierId!;
+    id = `supplier:${supplierId}`;
+    kind = e.category === 'OUTSOURCE' ? 'outsource' : 'supplier';
+    name = e.supplier?.name || 'Unknown supplier';
+    code = e.supplier?.supplierCode || null;
+  } else if (e.category === 'OUTSOURCE') {
+    id = 'outsource:unassigned';
+    kind = 'outsource';
+    name = 'Out source (no supplier)';
+    code = null;
+  } else if (e.category === 'MATERIAL') {
+    id = 'material:unassigned';
+    kind = 'supplier';
+    name = 'Material (no supplier)';
+    code = null;
+  } else if (e.category === 'OTHER' || e.otherType) {
+    id = `other:${e.otherType || 'OTHER'}:unassigned`;
+    kind = 'other';
+    name = e.otherType ? String(e.otherType).replace(/_/g, ' ') : 'Other (unassigned)';
+    code = null;
+  } else {
+    id = 'unassigned';
+    kind = 'unassigned';
+    name = 'Unassigned';
+    code = null;
+  }
+
+  return { id, kind, name, code };
+}
+
+function buildPayablesByParty(expenses: PayableExpenseLike[]) {
+  const partyMap = new Map<string, {
+    id: string;
+    kind: 'labour' | 'salary' | 'supplier' | 'outsource' | 'other' | 'unassigned';
+    name: string;
+    code: string | null;
+    amount: number;
+    count: number;
+  }>();
+
+  for (const e of expenses) {
+    const amount = roundMoney(toNumber(e.amount as never));
+    const { id, kind, name, code } = getPayablePartyMeta(e);
+    const existing = partyMap.get(id);
+    if (existing) {
+      existing.amount = roundMoney(existing.amount + amount);
+      existing.count += 1;
+    } else {
+      partyMap.set(id, { id, kind, name, code, amount, count: 1 });
+    }
+  }
+
+  const kindOrder: Record<string, number> = {
+    labour: 0,
+    salary: 1,
+    outsource: 2,
+    supplier: 3,
+    other: 4,
+    unassigned: 5,
+  };
+
+  return Array.from(partyMap.values()).sort((a, b) => {
+    const ka = kindOrder[a.kind] ?? 9;
+    const kb = kindOrder[b.kind] ?? 9;
+    if (ka !== kb) return ka - kb;
+    return b.amount - a.amount;
+  });
+}
+
+function buildPayablesByType(expenses: PayableExpenseLike[]) {
+  const typeMap = new Map<string, {
+    id: string;
+    label: string;
+    amount: number;
+    count: number;
+  }>();
+
+  for (const e of expenses) {
+    const amount = roundMoney(toNumber(e.amount as never));
+    let id: string;
+    let label: string;
+    if (e.category === 'LABOUR') {
+      id = 'labour';
+      label = 'Labour';
+    } else if (e.category === 'OTHER' && e.otherType === 'SALARY') {
+      id = 'salary';
+      label = 'Salary';
+    } else if (e.category === 'OUTSOURCE') {
+      id = 'outsource';
+      label = 'Out source';
+    } else if (e.category === 'MATERIAL') {
+      id = 'material';
+      label = 'Material';
+    } else {
+      id = 'other';
+      label = 'Other';
+    }
+    const existing = typeMap.get(id);
+    if (existing) {
+      existing.amount = roundMoney(existing.amount + amount);
+      existing.count += 1;
+    } else {
+      typeMap.set(id, { id, label, amount, count: 1 });
+    }
+  }
+
+  const order = ['labour', 'salary', 'outsource', 'material', 'other'];
+  return order
+    .map((id) => typeMap.get(id))
+    .filter((row): row is { id: string; label: string; amount: number; count: number } => !!row);
 }
 
 class ExpenseService {
@@ -203,6 +348,7 @@ class ExpenseService {
   async create(data: {
     category: ExpenseCategory;
     materialType?: ExpenseMaterialType | null;
+    outsourceType?: ExpenseOutsourceType | null;
     otherType?: ExpenseOtherType | null;
     description: string;
     amount: number;
@@ -217,6 +363,9 @@ class ExpenseService {
   }, userId?: string) {
     if (data.category !== 'MATERIAL' && data.materialType) {
       throw new AppError(400, 'Material type is only valid for MATERIAL expenses', 'INVALID_MATERIAL_TYPE');
+    }
+    if (data.category !== 'OUTSOURCE' && data.outsourceType) {
+      throw new AppError(400, 'Outsource type is only valid for OUTSOURCE expenses', 'INVALID_OUTSOURCE_TYPE');
     }
     if (data.category !== 'OTHER' && data.otherType) {
       throw new AppError(400, 'Other type is only valid for OTHER expenses', 'INVALID_OTHER_TYPE');
@@ -234,10 +383,11 @@ class ExpenseService {
     const expense = await prisma.expense.create({
       data: {
         jobId: jobId ?? null,
-        supplierId: supplierId ?? null,
+        supplierId: needsEmployee ? null : (supplierId ?? null),
         employeeId: needsEmployee ? (employeeId ?? null) : null,
         category: data.category,
         materialType: data.category === 'MATERIAL' ? (data.materialType || 'OTHER') : null,
+        outsourceType: data.category === 'OUTSOURCE' ? (data.outsourceType || 'MECHANIC') : null,
         otherType: data.category === 'OTHER' ? (data.otherType || 'OTHER') : null,
         description: data.description.trim(),
         amount: data.amount,
@@ -257,6 +407,7 @@ class ExpenseService {
   async update(id: string, data: Partial<{
     category: ExpenseCategory;
     materialType: ExpenseMaterialType | null;
+    outsourceType: ExpenseOutsourceType | null;
     otherType: ExpenseOtherType | null;
     description: string;
     amount: number;
@@ -276,6 +427,9 @@ class ExpenseService {
     const materialType = category === 'MATERIAL'
       ? (data.materialType !== undefined ? data.materialType : existing.materialType) || 'OTHER'
       : null;
+    const outsourceType = category === 'OUTSOURCE'
+      ? (data.outsourceType !== undefined ? data.outsourceType : existing.outsourceType) || 'MECHANIC'
+      : null;
     const otherType = category === 'OTHER'
       ? (data.otherType !== undefined ? data.otherType : existing.otherType) || 'OTHER'
       : null;
@@ -294,6 +448,7 @@ class ExpenseService {
       data: {
         category,
         materialType,
+        outsourceType,
         otherType,
         description: data.description?.trim(),
         amount: data.amount,
@@ -305,7 +460,9 @@ class ExpenseService {
         reference: data.reference === undefined ? undefined : data.reference,
         notes: data.notes === undefined ? undefined : data.notes,
         ...(jobId !== undefined ? { jobId } : {}),
-        ...(supplierId !== undefined ? { supplierId } : {}),
+        supplierId: needsEmployee
+          ? null
+          : (supplierId !== undefined ? supplierId : undefined),
         employeeId: needsEmployee
           ? (employeeId !== undefined ? employeeId : existing.employeeId)
           : null,
@@ -1316,7 +1473,16 @@ class FinanceReportService {
           ...softDeleteFilter(),
           expenseDate: { gte: start, lte: end },
         },
-        select: { amount: true, category: true, isPayable: true },
+        select: {
+          amount: true,
+          category: true,
+          otherType: true,
+          isPayable: true,
+          supplierId: true,
+          employeeId: true,
+          supplier: { select: { id: true, name: true, supplierCode: true } },
+          employee: { select: { id: true, name: true, employeeCode: true } },
+        },
       }),
     ]);
 
@@ -1339,12 +1505,16 @@ class FinanceReportService {
       paidExpenses.filter((e) => e.category === 'MATERIAL').reduce((s, e) => s + toNumber(e.amount), 0) * 100,
     ) / 100;
     const otherExpenses = Math.round(
-      paidExpenses.filter((e) => e.category === 'OTHER').reduce((s, e) => s + toNumber(e.amount), 0) * 100,
+      paidExpenses
+        .filter((e) => e.category !== 'LABOUR' && e.category !== 'MATERIAL')
+        .reduce((s, e) => s + toNumber(e.amount), 0) * 100,
     ) / 100;
     const totalExpenses = Math.round((labourExpenses + materialExpenses + otherExpenses) * 100) / 100;
     const totalPayables = Math.round(
       payableExpenses.reduce((s, e) => s + toNumber(e.amount), 0) * 100,
     ) / 100;
+    const payablesByParty = buildPayablesByParty(payableExpenses);
+    const payablesByType = buildPayablesByType(payableExpenses);
     const netProfit = Math.round((totalPaymentsReceived - totalExpenses) * 100) / 100;
 
     return {
@@ -1363,6 +1533,8 @@ class FinanceReportService {
       otherExpenses,
       totalExpenses,
       totalPayables,
+      payablesByParty,
+      payablesByType,
       netProfit,
       isProfit: netProfit >= 0,
     };
@@ -1372,6 +1544,7 @@ class FinanceReportService {
     metric: string,
     from?: string,
     to?: string,
+    party?: string,
   ) {
     const { start, end } = weekRange(from, to);
     const key = (metric || '').trim().toLowerCase();
@@ -1677,21 +1850,23 @@ class FinanceReportService {
         ? 'LABOUR'
         : key === 'material_expenses'
           ? 'MATERIAL'
-          : key === 'other_expenses'
-            ? 'OTHER'
-            : undefined;
+          : undefined;
       const isPayableOnly = key === 'payables';
-      const expenses = await prisma.expense.findMany({
+      const isOtherOperating = key === 'other_expenses';
+      const partyFilter = isPayableOnly ? (party || '').trim() || undefined : undefined;
+      const allExpenses = await prisma.expense.findMany({
         where: {
           ...softDeleteFilter(),
           expenseDate: { gte: start, lte: end },
           ...(category ? { category: category as ExpenseCategory } : {}),
-          ...(isPayableOnly ? { isPayable: true } : key === 'expenses' || category ? { isPayable: false } : {}),
+          ...(isOtherOperating ? { category: { notIn: ['LABOUR', 'MATERIAL'] } } : {}),
+          ...(isPayableOnly ? { isPayable: true } : key === 'expenses' || category || isOtherOperating ? { isPayable: false } : {}),
         },
         select: {
           id: true,
           category: true,
           materialType: true,
+          outsourceType: true,
           otherType: true,
           description: true,
           amount: true,
@@ -1699,12 +1874,23 @@ class FinanceReportService {
           paymentMethod: true,
           reference: true,
           isPayable: true,
+          supplierId: true,
+          employeeId: true,
           supplier: { select: { id: true, name: true, supplierCode: true } },
           employee: { select: { id: true, name: true, employeeCode: true, jobTitle: true } },
         },
         orderBy: { expenseDate: 'desc' },
         take: 500,
       });
+
+      const expenses = partyFilter
+        ? allExpenses.filter((e) => getPayablePartyMeta(e).id === partyFilter)
+        : allExpenses;
+      const partyMeta = partyFilter
+        ? (expenses[0]
+          ? getPayablePartyMeta(expenses[0])
+          : allExpenses.map((e) => getPayablePartyMeta(e)).find((p) => p.id === partyFilter) || null)
+        : null;
 
       const title = key === 'labour_expenses'
         ? 'Labour expenses'
@@ -1713,36 +1899,51 @@ class FinanceReportService {
           : key === 'other_expenses'
             ? 'Other expenses'
             : key === 'payables'
-              ? 'Payables (credit)'
+              ? (partyMeta
+                ? `Payables · ${partyMeta.name}${partyMeta.code ? ` (${partyMeta.code})` : ''}`
+                : 'Payables (credit)')
               : 'Total expenses';
+
+      const byParty = isPayableOnly && !partyFilter ? buildPayablesByParty(allExpenses) : undefined;
+      const byType = isPayableOnly && !partyFilter ? buildPayablesByType(allExpenses) : undefined;
 
       return {
         metric: key,
         title,
         from: start.toISOString(),
         to: end.toISOString(),
+        partyId: partyFilter || null,
+        party: partyMeta,
         columns: isPayableOnly
-          ? ['Date', 'Category', 'Supplier', 'Description', 'Amount']
+          ? ['Date', 'Category', 'Payable to', 'Description', 'Amount']
           : key === 'labour_expenses'
             ? ['Date', 'Category', 'Paid to', 'Description', 'Amount']
             : ['Date', 'Category', 'Description', 'Method', 'Amount'],
-        rows: expenses.map((e) => ({
-          id: e.id,
-          date: e.expenseDate,
-          category: e.category,
-          materialType: e.materialType,
-          otherType: e.otherType,
-          description: e.description,
-          paymentMethod: e.paymentMethod,
-          reference: e.reference,
-          isPayable: e.isPayable,
-          supplier: e.supplier?.name || null,
-          supplierCode: e.supplier?.supplierCode || null,
-          employee: e.employee?.name || null,
-          employeeCode: e.employee?.employeeCode || null,
-          amount: toNumber(e.amount),
-        })),
+        rows: expenses.map((e) => {
+          const meta = getPayablePartyMeta(e);
+          return {
+            id: e.id,
+            date: e.expenseDate,
+            category: e.category,
+            materialType: e.materialType,
+            outsourceType: e.outsourceType,
+            otherType: e.otherType,
+            description: e.description,
+            paymentMethod: e.paymentMethod,
+            reference: e.reference,
+            isPayable: e.isPayable,
+            supplier: e.supplier?.name || null,
+            supplierCode: e.supplier?.supplierCode || null,
+            employee: e.employee?.name || null,
+            employeeCode: e.employee?.employeeCode || null,
+            partyId: meta.id,
+            detail: e.employee?.name || e.supplier?.name || null,
+            amount: toNumber(e.amount),
+          };
+        }),
         total: Math.round(expenses.reduce((s, e) => s + toNumber(e.amount), 0) * 100) / 100,
+        ...(byParty ? { byParty } : {}),
+        ...(byType ? { byType } : {}),
       };
     }
 
@@ -1947,6 +2148,7 @@ class FinanceReportService {
           id: true,
           category: true,
           materialType: true,
+          outsourceType: true,
           otherType: true,
           description: true,
           amount: true,
@@ -2023,6 +2225,7 @@ class FinanceReportService {
         date: e.expenseDate,
         category: e.category,
         materialType: e.materialType,
+        outsourceType: e.outsourceType,
         otherType: e.otherType,
         description: e.description,
         paymentMethod: e.paymentMethod,
@@ -2036,6 +2239,7 @@ class FinanceReportService {
         date: e.expenseDate,
         category: e.category,
         materialType: e.materialType,
+        outsourceType: e.outsourceType,
         otherType: e.otherType,
         description: e.description,
         paymentMethod: e.paymentMethod,
@@ -2043,6 +2247,7 @@ class FinanceReportService {
         supplier: e.supplier?.name || null,
         supplierCode: e.supplier?.supplierCode || null,
         employee: e.employee?.name || null,
+        employeeCode: e.employee?.employeeCode || null,
         isPayable: true,
         amount: toNumber(e.amount),
       })),

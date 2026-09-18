@@ -295,7 +295,7 @@ function InvoiceOptionsModal({
             <p><span className="text-gray-500">Job:</span> <strong>{job.jobNumber}</strong></p>
             <p><span className="text-gray-500">Customer:</span> {job.customer?.name || '—'}</p>
             <p><span className="text-gray-500">Cash amount:</span> {formatCurrency(enteredTotal)}</p>
-            <p className="text-xs text-gray-500 pt-1">Cash invoice — no GST / tax applied.</p>
+            <p className="text-xs text-gray-500 pt-1">Printed as INVOICE with company GST number.</p>
           </div>
 
           <div className="flex justify-between items-center pt-2 border-t text-sm">
@@ -441,7 +441,7 @@ export default function InvoicesPage() {
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold">Invoices</h1>
-          <p className="text-gray-500">Select a job to generate and print its cash invoice</p>
+          <p className="text-gray-500">Select a job to generate and print its invoice</p>
         </div>
         <input
           type="search"

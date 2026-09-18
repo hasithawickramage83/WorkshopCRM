@@ -191,6 +191,20 @@ export interface FinancePeriodReportPdf {
     otherPaymentsCollected: number;
     totalExpenses: number;
     totalPayables?: number;
+    payablesByParty?: {
+      id: string;
+      kind: string;
+      name: string;
+      code?: string | null;
+      amount: number;
+      count: number;
+    }[];
+    payablesByType?: {
+      id: string;
+      label: string;
+      amount: number;
+      count: number;
+    }[];
     labourExpenses: number;
     materialExpenses: number;
     otherExpenses: number;
@@ -239,6 +253,9 @@ export interface FinancePeriodReportPdf {
     category?: string;
     description?: string;
     supplier?: string | null;
+    employee?: string | null;
+    employeeCode?: string | null;
+    supplierCode?: string | null;
     reference?: string | null;
     paymentMethod?: string | null;
     amount: number;
@@ -312,6 +329,62 @@ export function downloadFinancePeriodReportPdf(report: FinancePeriodReportPdf) {
   let y = nextTableStartY(doc, 14);
   doc.setFontSize(11);
   doc.setTextColor(0);
+  const byType = s.payablesByType || [];
+  const byParty = s.payablesByParty || [];
+  if (byType.length || byParty.length) {
+    if (byType.length) {
+      doc.text('Payables by type', 14, y);
+      autoTable(doc, {
+        startY: y + 4,
+        head: [['Type', 'Items', 'Total']],
+        body: byType.map((row) => [row.label, String(row.count), formatCurrency(row.amount)]),
+        styles: { fontSize: 8, cellPadding: 1.5 },
+        headStyles: { fillColor: [234, 88, 12], textColor: 255 },
+        columnStyles: {
+          1: { halign: 'right' },
+          2: { halign: 'right' },
+        },
+        didDrawPage: () => pdfFooter(doc, 'Finance report'),
+      });
+      y = nextTableStartY(doc, 14);
+      doc.setFontSize(11);
+      doc.setTextColor(0);
+    }
+    if (byParty.length) {
+      doc.text(`Payables by party (${byParty.length})`, 14, y);
+      autoTable(doc, {
+        startY: y + 4,
+        head: [['Payable to', 'Type', 'Items', 'Total']],
+        body: byParty.map((row) => [
+          row.code ? `${row.name} (${row.code})` : row.name,
+          row.kind === 'salary'
+            ? 'Salary'
+            : row.kind === 'labour' || row.kind === 'employee'
+              ? 'Labour'
+              : row.kind === 'outsource'
+                ? 'Out source'
+                : row.kind === 'supplier'
+                  ? 'Supplier'
+                  : row.kind === 'other'
+                    ? 'Other'
+                    : 'Unassigned',
+          String(row.count),
+          formatCurrency(row.amount),
+        ]),
+        styles: { fontSize: 8, cellPadding: 1.5 },
+        headStyles: { fillColor: [234, 88, 12], textColor: 255 },
+        columnStyles: {
+          2: { halign: 'right' },
+          3: { halign: 'right' },
+        },
+        didDrawPage: () => pdfFooter(doc, 'Finance report'),
+      });
+      y = nextTableStartY(doc, 14);
+      doc.setFontSize(11);
+      doc.setTextColor(0);
+    }
+  }
+
   doc.text(`Jobs received (${report.jobsReceived.length})`, 14, y);
   autoTable(doc, {
     startY: y + 4,
@@ -409,12 +482,14 @@ export function downloadFinancePeriodReportPdf(report: FinancePeriodReportPdf) {
   doc.text(`Payables (${payables.length}) · ${formatCurrency(s.totalPayables || 0)}`, 14, y);
   autoTable(doc, {
     startY: y + 4,
-    head: [['Date', 'Category', 'Supplier', 'Description', 'Amount']],
+    head: [['Date', 'Category', 'Payable to', 'Description', 'Amount']],
     body: payables.length
       ? payables.map((r) => [
           r.date ? formatDate(r.date) : '—',
           (r.category || '—').replace(/_/g, ' '),
-          r.supplier || '—',
+          r.employee
+            ? (r.employeeCode ? `${r.employee} (${r.employeeCode})` : r.employee)
+            : (r.supplier || '—'),
           r.description || '—',
           formatCurrency(r.amount),
         ])

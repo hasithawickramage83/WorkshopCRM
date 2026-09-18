@@ -632,6 +632,7 @@ model Payment {
 enum ExpenseCategory {
   LABOUR
   MATERIAL
+  OUTSOURCE
   OTHER
 }
 
@@ -639,6 +640,11 @@ enum ExpenseMaterialType {
   PAINT
   PARTS
   CONSUMABLES
+  OTHER
+}
+
+enum ExpenseOutsourceType {
+  MECHANIC
   OTHER
 }
 
@@ -699,6 +705,7 @@ model Employee {
   phone        String?
   email        String?
   notes        String?
+  hourlyRate   Decimal?  @map("hourly_rate") @db.Decimal(10, 2)
   isActive     Boolean   @default(true) @map("is_active")
   createdAt    DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @updatedAt @map("updated_at")
@@ -706,13 +713,38 @@ model Employee {
   createdById  String?   @map("created_by_id") @db.Uuid
   updatedById  String?   @map("updated_by_id") @db.Uuid
 
-  expenses Expense[]
+  expenses    Expense[]
+  weeklyHours LabourWeeklyHours[]
 
   @@index([name])
   @@index([phone])
   @@index([isActive])
   @@index([deletedAt])
   @@map("employees")
+}
+
+model LabourWeeklyHours {
+  id          String   @id @default(uuid()) @db.Uuid
+  employeeId  String   @map("employee_id") @db.Uuid
+  weekStart   DateTime @map("week_start") @db.Date
+  hours       Decimal  @db.Decimal(6, 2)
+  workedDays  Int      @default(0) @map("worked_days")
+  hourlyRate  Decimal  @map("hourly_rate") @db.Decimal(10, 2)
+  totalAmount Decimal  @map("total_amount") @db.Decimal(12, 2)
+  notes       String?
+  expenseId   String?  @unique @map("expense_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdById String?  @map("created_by_id") @db.Uuid
+  updatedById String?  @map("updated_by_id") @db.Uuid
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  expense  Expense? @relation(fields: [expenseId], references: [id], onDelete: SetNull)
+
+  @@unique([employeeId, weekStart])
+  @@index([weekStart])
+  @@index([employeeId])
+  @@map("labour_weekly_hours")
 }
 
 // ─── Finance Expenses / Collections ──────────────────────────────────────────
@@ -723,8 +755,9 @@ model Expense {
   supplierId    String?              @map("supplier_id") @db.Uuid
   employeeId    String?              @map("employee_id") @db.Uuid
   category      ExpenseCategory
-  materialType  ExpenseMaterialType? @map("material_type")
-  otherType     ExpenseOtherType?    @map("other_type")
+  materialType  ExpenseMaterialType?  @map("material_type")
+  outsourceType ExpenseOutsourceType? @map("outsource_type")
+  otherType     ExpenseOtherType?     @map("other_type")
   description   String
   amount        Decimal              @db.Decimal(12, 2)
   expenseDate   DateTime             @map("expense_date") @db.Date
@@ -737,9 +770,10 @@ model Expense {
   deletedAt     DateTime?            @map("deleted_at")
   createdById   String?              @map("created_by_id") @db.Uuid
 
-  job      Job?      @relation(fields: [jobId], references: [id], onDelete: SetNull)
-  supplier Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
-  employee Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  job               Job?                @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  supplier          Supplier?           @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  employee          Employee?           @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  labourWeeklyHours LabourWeeklyHours?
 
   @@index([jobId])
   @@index([supplierId])

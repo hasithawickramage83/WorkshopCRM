@@ -13,7 +13,7 @@ import {
   updateAmountPaidSchema, expenseSchema, updateExpenseSchema, jobCollectionSchema, updateJobCollectionSchema,
   bulkCollectionSchema, bulkJobCollectionSchema, additionalCollectionSchema,
   leadFollowUpSchema, outVehicleMarkSchema, outVehicleUpdateSchema, softDeleteJobSchema,
-  supplierSchema, employeeSchema,
+  supplierSchema, employeeSchema, labourHoursWeekSchema,
 } from '../utils/validators';
 import {
   authController, customerPortalController,
@@ -26,6 +26,7 @@ import {
   aiController, dashboardController, reportController, attendanceController,
   expenseController, collectionController, financeController, outVehicleController,
   whatsappController, backupController, supplierController, employeeController,
+  labourHoursController,
 } from '../controllers/index.controller';
 
 const router = Router();
@@ -87,6 +88,10 @@ router.get('/employees/:id', authenticate, validateParams(idParamSchema), employ
 router.post('/employees', authenticate, requirePage('employees'), validateBody(employeeSchema), employeeController.create);
 router.put('/employees/:id', authenticate, requirePage('employees'), validateParams(idParamSchema), validateBody(employeeSchema.partial()), employeeController.update);
 router.delete('/employees/:id', authenticate, requirePage('employees'), validateParams(idParamSchema), employeeController.delete);
+
+router.get('/labour-hours', authenticate, requirePage('labour-hours'), labourHoursController.getWeek);
+router.post('/labour-hours/week', authenticate, requirePage('labour-hours'), validateBody(labourHoursWeekSchema), labourHoursController.saveWeek);
+router.delete('/labour-hours/:id', authenticate, requirePage('labour-hours'), validateParams(idParamSchema), labourHoursController.delete);
 
 // Vehicles
 router.get('/vehicles', authenticate, vehicleController.list);

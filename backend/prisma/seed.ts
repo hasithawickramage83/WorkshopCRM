@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs';
 const prisma = new PrismaClient();
 
 const ALL_PAGES = [
-  'dashboard', 'customers', 'suppliers', 'employees', 'vehicles', 'leads', 'jobs', 'register', 'out-vehicles',
+  'dashboard', 'customers', 'suppliers', 'employees', 'labour-hours', 'vehicles', 'leads', 'jobs', 'register', 'out-vehicles',
   'inventory', 'parts-sales', 'insurance', 'quotations', 'invoices', 'finance',
   'ai', 'reports', 'attendance', 'whatsapp', 'users',
 ];
@@ -19,7 +19,7 @@ const roles: { name: string; description: string; permissions: string[] }[] = [
     name: 'MANAGER',
     description: 'Jobs, quotations, reports and operations',
     permissions: [
-      'dashboard', 'customers', 'suppliers', 'employees', 'vehicles', 'leads', 'jobs', 'register', 'out-vehicles',
+      'dashboard', 'customers', 'suppliers', 'employees', 'labour-hours', 'vehicles', 'leads', 'jobs', 'register', 'out-vehicles',
       'inventory', 'parts-sales', 'insurance', 'quotations', 'invoices', 'finance',
       'ai', 'reports', 'whatsapp',
     ],

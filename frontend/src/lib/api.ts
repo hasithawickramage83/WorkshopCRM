@@ -80,6 +80,12 @@ export const employeesApi = {
   delete: (id: string) => api.delete(`/employees/${id}`),
 };
 
+export const labourHoursApi = {
+  getWeek: (weekStart?: string) => api.get('/labour-hours', { params: { weekStart } }),
+  saveWeek: (data: unknown) => api.post('/labour-hours/week', data),
+  delete: (id: string) => api.delete(`/labour-hours/${id}`),
+};
+
 export const vehiclesApi = {
   list: (params?: Record<string, string>) => api.get('/vehicles', { params }),
   get: (id: string) => api.get(`/vehicles/${id}`),
@@ -168,7 +174,7 @@ export const invoicesApi = {
 export const financeApi = {
   weeklySummary: (params?: { from?: string; to?: string }) =>
     api.get('/finance/weekly-summary', { params }),
-  weeklyDetails: (params: { metric: string; from?: string; to?: string }) =>
+  weeklyDetails: (params: { metric: string; from?: string; to?: string; party?: string }) =>
     api.get('/finance/weekly-details', { params }),
   periodReport: (params?: { from?: string; to?: string }) =>
     api.get('/finance/period-report', { params }),

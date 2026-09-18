@@ -102,10 +102,11 @@ export default function InvoicePrintTemplate({ invoice }: { invoice: InvoicePrin
       </header>
 
       <div className="invoice-red-line" />
+      <p className="invoice-gst-below">GST NO: {COMPANY_INVOICE.gstNumber}</p>
 
       <section className="invoice-body">
         <div className="invoice-meta-row">
-          <h2 className="invoice-tax-title">CASH INVOICE</h2>
+          <h2 className="invoice-tax-title">INVOICE</h2>
           <div className="invoice-meta-details">
             <p><span>Invoice No:</span> <strong>{invoice.invoiceNumber}</strong></p>
             <p><span>Date:</span> <strong>{formatDate(invoice.createdAt)}</strong></p>

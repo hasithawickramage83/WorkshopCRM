@@ -17,6 +17,7 @@ import { deepSeekService } from '../services/deepseek.service';
 import { backupService } from '../services/backup.service';
 import { supplierService } from '../services/supplier.service';
 import { employeeService } from '../services/employee.service';
+import { labourHoursService } from '../services/labour-hours.service';
 
 const uid = (req: AuthRequest) => req.user?.userId;
 const paramId = (req: AuthRequest) => req.params.id as string;
@@ -72,6 +73,18 @@ export const employeeController = {
   }),
   delete: asyncHandler(async (req: AuthRequest, res: Response) => {
     sendSuccess(res, await employeeService.delete(paramId(req), uid(req)));
+  }),
+};
+
+export const labourHoursController = {
+  getWeek: asyncHandler(async (req: AuthRequest, res: Response) => {
+    sendSuccess(res, await labourHoursService.getWeek(String(req.query.weekStart || '')));
+  }),
+  saveWeek: asyncHandler(async (req: AuthRequest, res: Response) => {
+    sendSuccess(res, await labourHoursService.saveWeek(req.body, uid(req)));
+  }),
+  delete: asyncHandler(async (req: AuthRequest, res: Response) => {
+    sendSuccess(res, await labourHoursService.deleteEntry(paramId(req)));
   }),
 };
 
@@ -453,6 +466,7 @@ export const financeController = {
       req.query.metric as string,
       req.query.from as string | undefined,
       req.query.to as string | undefined,
+      req.query.party as string | undefined,
     ));
   }),
   periodReport: asyncHandler(async (req: AuthRequest, res: Response) => {
