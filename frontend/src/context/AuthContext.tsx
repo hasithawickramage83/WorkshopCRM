@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { authApi } from '../lib/api';
 import { User } from '../lib/types';
-import type { PageKey } from '../lib/pages';
+import { APP_PAGES, type PageKey } from '../lib/pages';
 
 interface AuthContextType {
   user: User | null;
@@ -53,30 +53,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const firstAccessiblePath = () => {
     if (!user) return '/login';
-    if (user.role === 'SUPER_ADMIN' || (user.pages || []).includes('dashboard')) return '/';
-    const order = [
-      { key: 'customers' as const, path: '/customers' },
-      { key: 'suppliers' as const, path: '/suppliers' },
-      { key: 'employees' as const, path: '/employees' },
-      { key: 'labour-hours' as const, path: '/labour-hours' },
-      { key: 'vehicles' as const, path: '/vehicles' },
-      { key: 'leads' as const, path: '/leads' },
-      { key: 'jobs' as const, path: '/jobs' },
-      { key: 'register' as const, path: '/register' },
-      { key: 'out-vehicles' as const, path: '/out-vehicles' },
-      { key: 'inventory' as const, path: '/inventory' },
-      { key: 'parts-sales' as const, path: '/parts-sales' },
-      { key: 'insurance' as const, path: '/insurance' },
-      { key: 'quotations' as const, path: '/quotations' },
-      { key: 'invoices' as const, path: '/invoices' },
-      { key: 'finance' as const, path: '/finance' },
-      { key: 'ai' as const, path: '/ai' },
-      { key: 'reports' as const, path: '/reports' },
-      { key: 'attendance' as const, path: '/attendance' },
-      { key: 'users' as const, path: '/users' },
-    ];
     const pages = user.pages || [];
-    const hit = order.find((p) => pages.includes(p.key));
+    if (user.role === 'SUPER_ADMIN' || pages.includes('dashboard')) return '/';
+    const hit = APP_PAGES.find((p) => p.key !== 'dashboard' && pages.includes(p.key));
     return hit?.path || '/login';
   };
 

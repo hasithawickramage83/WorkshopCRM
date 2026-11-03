@@ -15,6 +15,7 @@ interface Lead {
   id: string;
   leadCode: string;
   customerName: string;
+  vehicleNo?: string | null;
   company?: string;
   companyName?: string;
   phone?: string;
@@ -53,6 +54,7 @@ const STATUS_COLORS: Record<string, string> = {
 
 const emptyForm = {
   customerName: '',
+  vehicleNo: '',
   company: 'CEYLON_AUTOMOBILE',
   phone: '',
   email: '',
@@ -103,6 +105,7 @@ export default function LeadsPage() {
     setEditingId(lead.id);
     setForm({
       customerName: lead.customerName,
+      vehicleNo: lead.vehicleNo || '',
       company: lead.company || 'CEYLON_AUTOMOBILE',
       phone: lead.phone || '',
       email: lead.email || '',
@@ -117,8 +120,14 @@ export default function LeadsPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const vehicleNo = form.vehicleNo.trim();
+    if (!vehicleNo) {
+      setToast('Vehicle no is required');
+      return;
+    }
     const payload = {
       customerName: form.customerName,
+      vehicleNo,
       company: form.company,
       phone: form.phone || undefined,
       email: form.email || undefined,
@@ -238,6 +247,7 @@ export default function LeadsPage() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div><label className="label">Customer Name *</label><input className="input" required value={form.customerName} onChange={(e) => setForm({ ...form, customerName: e.target.value })} /></div>
+            <div><label className="label">Vehicle no *</label><input className="input" required placeholder="e.g. ABC123" value={form.vehicleNo} onChange={(e) => setForm({ ...form, vehicleNo: e.target.value })} /></div>
             <div>
               <label className="label">Company *</label>
               <select className="input" required value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })}>
@@ -305,6 +315,7 @@ export default function LeadsPage() {
                 </select>
               </div>
               <h3 className="font-semibold">{lead.customerName}</h3>
+              <p className="text-sm font-mono font-medium text-gray-800 mt-0.5">{lead.vehicleNo || 'No vehicle no'}</p>
               <p className="text-xs text-brand-700 font-medium mt-0.5">{formatCompany(lead.company)}</p>
               <p className="text-sm text-gray-500 mt-1">{lead.phone || 'No phone'}</p>
               {lead.estimatedPrice != null && Number(lead.estimatedPrice) > 0 && (
@@ -373,6 +384,7 @@ export default function LeadsPage() {
                 </h2>
                 <p className="text-sm text-gray-500 mt-1">
                   {followUpLead.leadCode} · {followUpLead.customerName}
+                  {followUpLead.vehicleNo ? ` · ${followUpLead.vehicleNo}` : ''}
                   {followUpLead.phone ? ` · ${followUpLead.phone}` : ''}
                 </p>
               </div>

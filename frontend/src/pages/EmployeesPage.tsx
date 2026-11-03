@@ -3,8 +3,20 @@ import { Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 import { employeesApi } from '../lib/api';
 import { Employee, formatDate } from '../lib/types';
 
+interface LinkableUser {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+}
+
+function userLabel(user: { firstName: string; lastName: string; email: string }) {
+  return `${user.firstName} ${user.lastName}`.trim() + ` (${user.email})`;
+}
+
 export default function EmployeesPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [users, setUsers] = useState<LinkableUser[]>([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -19,6 +31,7 @@ export default function EmployeesPage() {
     notes: '',
     hourlyRate: '',
     isActive: true,
+    userId: '',
   });
 
   const load = () => {
@@ -37,10 +50,17 @@ export default function EmployeesPage() {
     return () => clearTimeout(t);
   }, [toast]);
 
+  const loadUsers = () => {
+    employeesApi.listUsers()
+      .then((res) => setUsers(res.data.data.users || []))
+      .catch(() => setUsers([]));
+  };
+
   const openCreate = () => {
     setEditingId(null);
-    setForm({ name: '', jobTitle: '', phone: '', email: '', notes: '', hourlyRate: '', isActive: true });
+    setForm({ name: '', jobTitle: '', phone: '', email: '', notes: '', hourlyRate: '', isActive: true, userId: '' });
     setError('');
+    loadUsers();
     setShowForm(true);
   };
 
@@ -54,8 +74,10 @@ export default function EmployeesPage() {
       notes: row.notes || '',
       hourlyRate: row.hourlyRate != null ? String(row.hourlyRate) : '',
       isActive: row.isActive !== false,
+      userId: row.userId || row.user?.id || '',
     });
     setError('');
+    loadUsers();
     setShowForm(true);
   };
 
@@ -70,6 +92,7 @@ export default function EmployeesPage() {
       notes: form.notes.trim() || null,
       hourlyRate: form.hourlyRate.trim() === '' ? null : Number(form.hourlyRate),
       isActive: form.isActive,
+      userId: form.userId || null,
     };
     try {
       if (editingId) {
@@ -134,6 +157,7 @@ export default function EmployeesPage() {
               <th className="text-left p-3">Job title</th>
               <th className="text-left p-3">Hourly rate</th>
               <th className="text-left p-3">Phone</th>
+              <th className="text-left p-3">Linked login</th>
               <th className="text-left p-3">Status</th>
               <th className="text-left p-3">Created</th>
               <th className="p-3" />
@@ -141,9 +165,9 @@ export default function EmployeesPage() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={8} className="p-6 text-center text-gray-400">Loading...</td></tr>
+              <tr><td colSpan={9} className="p-6 text-center text-gray-400">Loading...</td></tr>
             ) : employees.length === 0 ? (
-              <tr><td colSpan={8} className="p-6 text-center text-gray-400">No employees yet</td></tr>
+              <tr><td colSpan={9} className="p-6 text-center text-gray-400">No employees yet</td></tr>
             ) : employees.map((row) => (
               <tr key={row.id} className="border-t">
                 <td className="p-3 font-mono text-xs">{row.employeeCode}</td>
@@ -151,6 +175,9 @@ export default function EmployeesPage() {
                 <td className="p-3">{row.jobTitle || '—'}</td>
                 <td className="p-3">{row.hourlyRate != null ? `$${Number(row.hourlyRate).toFixed(2)}` : '—'}</td>
                 <td className="p-3">{row.phone || '—'}</td>
+                <td className="p-3">
+                  {row.user ? userLabel(row.user) : '—'}
+                </td>
                 <td className="p-3">
                   {row.isActive !== false ? (
                     <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">Active</span>
@@ -203,6 +230,21 @@ export default function EmployeesPage() {
                 <label className="label">Email</label>
                 <input type="email" className="input" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
               </div>
+            </div>
+            <div>
+              <label className="label">Linked login user</label>
+              <select className="input" value={form.userId} onChange={(e) => setForm({ ...form, userId: e.target.value })}>
+                <option value="">None — not required</option>
+                {users
+                  .filter((user) => {
+                    const taken = employees.find((row) => (row.userId || row.user?.id) === user.id && row.id !== editingId);
+                    return !taken;
+                  })
+                  .map((user) => (
+                    <option key={user.id} value={user.id}>{userLabel(user)}</option>
+                  ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">Optional. Labour logins only see their own tasks when linked here.</p>
             </div>
             <div>
               <label className="label">Notes</label>

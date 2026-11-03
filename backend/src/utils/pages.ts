@@ -5,15 +5,18 @@ export const APP_PAGES = [
   { key: 'suppliers', path: '/suppliers', label: 'Suppliers' },
   { key: 'employees', path: '/employees', label: 'Employees' },
   { key: 'labour-hours', path: '/labour-hours', label: 'Labour hours' },
+  { key: 'labour-tasks', path: '/labour-tasks', label: 'Labour tasks' },
   { key: 'vehicles', path: '/vehicles', label: 'Vehicles' },
   { key: 'leads', path: '/leads', label: 'Leads' },
   { key: 'jobs', path: '/jobs', label: 'Jobs' },
   { key: 'register', path: '/register', label: 'Job Registration' },
   { key: 'out-vehicles', path: '/out-vehicles', label: 'Out Vehicles' },
+  { key: 'return-jobs', path: '/return-jobs', label: 'Return jobs' },
   { key: 'inventory', path: '/inventory', label: 'Inventory' },
   { key: 'parts-sales', path: '/parts-sales', label: 'Parts Sales' },
   { key: 'insurance', path: '/insurance', label: 'Insurance' },
   { key: 'quotations', path: '/quotations', label: 'Quotations' },
+  { key: 'winz-quotes', path: '/winz-quotes', label: 'WINZ quotes' },
   { key: 'invoices', path: '/invoices', label: 'Invoices' },
   { key: 'finance', path: '/finance', label: 'Finance' },
   { key: 'ai', path: '/ai', label: 'AI Assistant' },
@@ -80,4 +83,10 @@ export function resolveEffectivePages(
 
 export function hasPageAccess(pages: string[], pageKey: PageKey): boolean {
   return pages.includes(pageKey);
+}
+
+/** Managers/admins can pick any labour; labour logins are locked to their own record. */
+export function canSelectAllLabours(roleName: string, pages: string[] = []): boolean {
+  if (roleName === SUPER_ADMIN_ROLE || roleName === 'MANAGER') return true;
+  return pages.includes('employees') || pages.includes('labour-hours') || pages.includes('users');
 }

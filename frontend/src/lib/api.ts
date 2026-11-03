@@ -73,11 +73,21 @@ export const suppliersApi = {
 };
 
 export const employeesApi = {
+  listUsers: () => api.get('/employees/users'),
   list: (params?: Record<string, string>) => api.get('/employees', { params }),
   get: (id: string) => api.get(`/employees/${id}`),
   create: (data: unknown) => api.post('/employees', data),
   update: (id: string, data: unknown) => api.put(`/employees/${id}`, data),
   delete: (id: string) => api.delete(`/employees/${id}`),
+};
+
+export const labourTasksApi = {
+  labours: () => api.get('/labour-tasks/labours'),
+  list: (params: { employeeId: string; workDate: string }) =>
+    api.get('/labour-tasks', { params }),
+  createBatch: (data: unknown) => api.post('/labour-tasks', data),
+  update: (id: string, data: unknown) => api.put(`/labour-tasks/${id}`, data),
+  delete: (id: string) => api.delete(`/labour-tasks/${id}`),
 };
 
 export const labourHoursApi = {
@@ -112,10 +122,19 @@ export const jobsApi = {
   get: (id: string) => api.get(`/jobs/${id}`),
   create: (data: unknown) => api.post('/jobs', data),
   update: (id: string, data: unknown) => api.put(`/jobs/${id}`, data),
-  updateStatus: (id: string, status: string, notes?: string) =>
-    api.patch(`/jobs/${id}/status`, { status, notes }),
+  updateStatus: (id: string, status: string, notes?: string, actionAt?: string) =>
+    api.patch(`/jobs/${id}/status`, { status, notes, actionAt }),
+  updateStatusHistory: (jobId: string, historyId: string, data: { status: string; notes: string; actionAt: string }) =>
+    api.patch(`/jobs/${jobId}/history/${historyId}`, data),
   delete: (id: string, remarks: string) => api.delete(`/jobs/${id}`, { data: { remarks } }),
   permanentDelete: (id: string) => api.delete(`/jobs/${id}/permanent`),
+};
+
+export const returnJobsApi = {
+  list: (params?: Record<string, string>) => api.get('/return-jobs', { params }),
+  create: (data: unknown) => api.post('/return-jobs', data),
+  update: (id: string, data: unknown) => api.put(`/return-jobs/${id}`, data),
+  delete: (id: string) => api.delete(`/return-jobs/${id}`),
 };
 
 export const inventoryApi = {
@@ -137,6 +156,14 @@ export const partSalesApi = {
 export const insuranceApi = {
   list: (params?: Record<string, string>) => api.get('/insurance-claims', { params }),
   create: (data: unknown) => api.post('/insurance-claims', data),
+};
+
+export const winzQuotesApi = {
+  list: (params?: Record<string, string>) => api.get('/winz-quotes', { params }),
+  get: (id: string) => api.get(`/winz-quotes/${id}`),
+  create: (data: unknown) => api.post('/winz-quotes', data),
+  update: (id: string, data: unknown) => api.put(`/winz-quotes/${id}`, data),
+  delete: (id: string) => api.delete(`/winz-quotes/${id}`),
 };
 
 export const quotationsApi = {
@@ -178,6 +205,8 @@ export const financeApi = {
     api.get('/finance/weekly-details', { params }),
   periodReport: (params?: { from?: string; to?: string }) =>
     api.get('/finance/period-report', { params }),
+  workshopReport: (params?: { from?: string; to?: string }) =>
+    api.get('/finance/workshop-report', { params }),
   listExpenses: (params?: Record<string, string>) =>
     api.get('/finance/expenses', { params }),
   createExpense: (data: unknown) => api.post('/finance/expenses', data),
@@ -251,6 +280,8 @@ export const reportsApi = {
     api.get('/reports/technician-productivity', { params: { jobCategory: jobCategory || undefined } }),
   outstandingInvoices: (jobCategory?: string) =>
     api.get('/reports/outstanding-invoices', { params: { jobCategory: jobCategory || undefined } }),
+  workshopPeriod: (params?: { from?: string; to?: string }) =>
+    api.get('/reports/workshop-period', { params }),
   export: (type: string, format = 'csv') =>
     api.get(`/reports/export/${type}`, { params: { format }, responseType: format === 'csv' ? 'blob' : 'json' }),
 };

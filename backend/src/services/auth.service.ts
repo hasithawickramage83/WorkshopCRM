@@ -252,6 +252,7 @@ export class AuthService {
   async updateUser(
     userId: string,
     data: {
+      email?: string;
       firstName?: string;
       lastName?: string;
       phone?: string | null;
@@ -268,6 +269,16 @@ export class AuthService {
     });
     if (!existing) {
       throw new AppError(404, 'User not found', 'NOT_FOUND');
+    }
+
+    const nextEmail = data.email?.trim().toLowerCase();
+    if (nextEmail && nextEmail !== existing.email.toLowerCase()) {
+      const clash = await prisma.user.findFirst({
+        where: { email: nextEmail, id: { not: userId } },
+      });
+      if (clash) {
+        throw new AppError(409, 'Email already registered', 'EMAIL_EXISTS');
+      }
     }
 
     if (data.roleId) {
@@ -287,6 +298,7 @@ export class AuthService {
     }
 
     const updateData: Prisma.UserUpdateInput = {
+      ...(nextEmail ? { email: nextEmail } : {}),
       firstName: data.firstName,
       lastName: data.lastName,
       phone: data.phone,

@@ -167,6 +167,7 @@ export default function UsersPage() {
       };
 
       if (editingUser) {
+        payload.email = userForm.email.trim().toLowerCase();
         if (userForm.password) payload.password = userForm.password;
         await authApi.updateUser(editingUser.id, payload);
       } else {
@@ -399,7 +400,6 @@ export default function UsersPage() {
                 type="email"
                 className="input"
                 required
-                disabled={!!editingUser}
                 value={userForm.email}
                 onChange={(e) => setUserForm({ ...userForm, email: e.target.value })}
               />

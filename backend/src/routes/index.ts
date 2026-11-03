@@ -13,7 +13,10 @@ import {
   updateAmountPaidSchema, expenseSchema, updateExpenseSchema, jobCollectionSchema, updateJobCollectionSchema,
   bulkCollectionSchema, bulkJobCollectionSchema, additionalCollectionSchema,
   leadFollowUpSchema, outVehicleMarkSchema, outVehicleUpdateSchema, softDeleteJobSchema,
-  supplierSchema, employeeSchema, labourHoursWeekSchema,
+  jobHistoryParamSchema,
+  supplierSchema, employeeSchema, labourHoursWeekSchema, labourTasksBatchSchema, updateLabourTaskSchema,
+  winzQuoteSchema, updateWinzQuoteSchema,
+  jobReturnSchema, updateJobReturnSchema,
 } from '../utils/validators';
 import {
   authController, customerPortalController,
@@ -26,7 +29,7 @@ import {
   aiController, dashboardController, reportController, attendanceController,
   expenseController, collectionController, financeController, outVehicleController,
   whatsappController, backupController, supplierController, employeeController,
-  labourHoursController,
+  labourHoursController, labourTasksController, winzQuoteController, returnJobsController,
 } from '../controllers/index.controller';
 
 const router = Router();
@@ -83,11 +86,18 @@ router.post('/suppliers', authenticate, requirePage('suppliers'), validateBody(s
 router.put('/suppliers/:id', authenticate, requirePage('suppliers'), validateParams(idParamSchema), validateBody(supplierSchema.partial()), supplierController.update);
 router.delete('/suppliers/:id', authenticate, requirePage('suppliers'), validateParams(idParamSchema), supplierController.delete);
 
+router.get('/employees/users', authenticate, requirePage('employees'), employeeController.listUsers);
 router.get('/employees', authenticate, employeeController.list);
 router.get('/employees/:id', authenticate, validateParams(idParamSchema), employeeController.get);
 router.post('/employees', authenticate, requirePage('employees'), validateBody(employeeSchema), employeeController.create);
 router.put('/employees/:id', authenticate, requirePage('employees'), validateParams(idParamSchema), validateBody(employeeSchema.partial()), employeeController.update);
 router.delete('/employees/:id', authenticate, requirePage('employees'), validateParams(idParamSchema), employeeController.delete);
+
+router.get('/labour-tasks/labours', authenticate, requirePage('labour-tasks'), labourTasksController.listLabours);
+router.get('/labour-tasks', authenticate, requirePage('labour-tasks'), labourTasksController.list);
+router.post('/labour-tasks', authenticate, requirePage('labour-tasks'), validateBody(labourTasksBatchSchema), labourTasksController.createBatch);
+router.put('/labour-tasks/:id', authenticate, requirePage('labour-tasks'), validateParams(idParamSchema), validateBody(updateLabourTaskSchema), labourTasksController.update);
+router.delete('/labour-tasks/:id', authenticate, requirePage('labour-tasks'), validateParams(idParamSchema), labourTasksController.delete);
 
 router.get('/labour-hours', authenticate, requirePage('labour-hours'), labourHoursController.getWeek);
 router.post('/labour-hours/week', authenticate, requirePage('labour-hours'), validateBody(labourHoursWeekSchema), labourHoursController.saveWeek);
@@ -114,6 +124,7 @@ router.get('/jobs/:id', authenticate, validateParams(idParamSchema), jobControll
 router.post('/jobs', authenticate, validateBody(jobSchema), jobController.create);
 router.put('/jobs/:id', authenticate, validateParams(idParamSchema), validateBody(updateJobSchema), jobController.update);
 router.patch('/jobs/:id/status', authenticate, validateParams(idParamSchema), validateBody(jobStatusSchema), jobController.updateStatus);
+router.patch('/jobs/:id/history/:historyId', authenticate, validateParams(jobHistoryParamSchema), validateBody(jobStatusSchema), jobController.updateStatusHistory);
 router.delete('/jobs/:id', authenticate, authorize('SUPER_ADMIN', 'MANAGER'), validateParams(idParamSchema), validateBody(softDeleteJobSchema), jobController.delete);
 router.delete('/jobs/:id/permanent', authenticate, authorize('SUPER_ADMIN', 'MANAGER'), validateParams(idParamSchema), jobController.permanentDelete);
 
@@ -148,6 +159,18 @@ router.post('/quotations/:id/send-whatsapp', authenticate, validateParams(idPara
 router.patch('/quotations/:id/status', authenticate, validateParams(idParamSchema), quotationController.updateStatus);
 router.delete('/quotations/:id', authenticate, validateParams(idParamSchema), quotationController.delete);
 
+// WINZ quotations
+router.get('/winz-quotes', authenticate, requirePage('winz-quotes'), winzQuoteController.list);
+router.get('/winz-quotes/:id', authenticate, requirePage('winz-quotes'), validateParams(idParamSchema), winzQuoteController.get);
+router.post('/winz-quotes', authenticate, requirePage('winz-quotes'), validateBody(winzQuoteSchema), winzQuoteController.create);
+router.put('/winz-quotes/:id', authenticate, requirePage('winz-quotes'), validateParams(idParamSchema), validateBody(updateWinzQuoteSchema), winzQuoteController.update);
+router.delete('/winz-quotes/:id', authenticate, requirePage('winz-quotes'), validateParams(idParamSchema), winzQuoteController.delete);
+
+router.get('/return-jobs', authenticate, requirePage('return-jobs'), returnJobsController.list);
+router.post('/return-jobs', authenticate, requirePage('return-jobs'), validateBody(jobReturnSchema), returnJobsController.create);
+router.put('/return-jobs/:id', authenticate, requirePage('return-jobs'), validateParams(idParamSchema), validateBody(updateJobReturnSchema), returnJobsController.update);
+router.delete('/return-jobs/:id', authenticate, requirePage('return-jobs'), validateParams(idParamSchema), returnJobsController.delete);
+
 // Invoices
 router.get('/invoices', authenticate, invoiceController.list);
 router.get('/invoices/:id', authenticate, validateParams(idParamSchema), invoiceController.get);
@@ -177,6 +200,7 @@ router.get('/reports/insurance-revenue', authenticate, reportController.insuranc
 router.get('/reports/jobs-by-source', authenticate, reportController.jobsBySource);
 router.get('/reports/technician-productivity', authenticate, reportController.technicianProductivity);
 router.get('/reports/outstanding-invoices', authenticate, reportController.outstandingInvoices);
+router.get('/reports/workshop-period', authenticate, reportController.workshopPeriod);
 router.get('/reports/export/:type', authenticate, reportController.export);
 
 // Attendance
@@ -190,6 +214,7 @@ router.get('/attendance/report', authenticate, requirePage('reports'), attendanc
 router.get('/finance/weekly-summary', authenticate, requirePage('finance'), financeController.weeklySummary);
 router.get('/finance/weekly-details', authenticate, requirePage('finance'), financeController.weeklyDetails);
 router.get('/finance/period-report', authenticate, requirePage('finance'), financeController.periodReport);
+router.get('/finance/workshop-report', authenticate, requirePage('finance'), financeController.workshopReport);
 router.get('/finance/expenses', authenticate, requirePage('finance'), expenseController.list);
 router.post('/finance/expenses', authenticate, requirePage('finance'), validateBody(expenseSchema), expenseController.create);
 router.put('/finance/expenses/:id', authenticate, requirePage('finance'), validateParams(idParamSchema), validateBody(updateExpenseSchema), expenseController.update);

@@ -4,8 +4,8 @@ import bcrypt from 'bcryptjs';
 const prisma = new PrismaClient();
 
 const ALL_PAGES = [
-  'dashboard', 'customers', 'suppliers', 'employees', 'labour-hours', 'vehicles', 'leads', 'jobs', 'register', 'out-vehicles',
-  'inventory', 'parts-sales', 'insurance', 'quotations', 'invoices', 'finance',
+  'dashboard', 'customers', 'suppliers', 'employees', 'labour-hours', 'labour-tasks', 'vehicles', 'leads', 'jobs', 'register', 'out-vehicles', 'return-jobs',
+  'inventory', 'parts-sales', 'insurance', 'quotations', 'winz-quotes', 'invoices', 'finance',
   'ai', 'reports', 'attendance', 'whatsapp', 'users',
 ];
 
@@ -19,8 +19,8 @@ const roles: { name: string; description: string; permissions: string[] }[] = [
     name: 'MANAGER',
     description: 'Jobs, quotations, reports and operations',
     permissions: [
-      'dashboard', 'customers', 'suppliers', 'employees', 'labour-hours', 'vehicles', 'leads', 'jobs', 'register', 'out-vehicles',
-      'inventory', 'parts-sales', 'insurance', 'quotations', 'invoices', 'finance',
+      'dashboard', 'customers', 'suppliers', 'employees', 'labour-hours', 'labour-tasks', 'vehicles', 'leads', 'jobs', 'register', 'out-vehicles', 'return-jobs',
+      'inventory', 'parts-sales', 'insurance', 'quotations', 'winz-quotes', 'invoices', 'finance',
       'ai', 'reports', 'whatsapp',
     ],
   },
@@ -28,7 +28,7 @@ const roles: { name: string; description: string; permissions: string[] }[] = [
     name: 'RECEPTIONIST',
     description: 'Customers, jobs and quotations',
     permissions: [
-      'dashboard', 'customers', 'vehicles', 'jobs', 'register', 'out-vehicles', 'quotations', 'invoices',
+      'dashboard', 'customers', 'vehicles', 'jobs', 'register', 'out-vehicles', 'return-jobs', 'quotations', 'winz-quotes', 'invoices',
     ],
   },
   {
@@ -39,7 +39,7 @@ const roles: { name: string; description: string; permissions: string[] }[] = [
   {
     name: 'TECHNICIAN',
     description: 'Job updates and attendance',
-    permissions: ['dashboard', 'jobs', 'attendance'],
+    permissions: ['dashboard', 'jobs', 'labour-tasks', 'attendance'],
   },
   {
     name: 'ASSESSOR',
@@ -195,6 +195,7 @@ async function main() {
     create: {
       leadCode: 'LD2506210001',
       customerName: 'Sarah Thompson',
+      vehicleNo: 'ABC123',
       phone: '+64 21 987 6543',
       email: 'sarah.t@email.com',
       source: 'WEBSITE',

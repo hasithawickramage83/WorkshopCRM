@@ -30,8 +30,16 @@ interface StatusHistoryItem {
   fromStatus: string | null;
   toStatus: string;
   notes: string | null;
+  actionAt?: string | null;
   createdAt: string;
   changedBy?: { firstName: string; lastName: string };
+}
+
+function toInputDate(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 interface JobDetail extends Job {
@@ -72,6 +80,19 @@ function toDateInput(value?: string | null) {
   return value.slice(0, 10);
 }
 
+function historyDateValue(item: StatusHistoryItem) {
+  if (item.actionAt) return item.actionAt.slice(0, 10);
+  return toInputDate(new Date(item.createdAt));
+}
+
+function formatStoredActionDate(actionAt?: string | null, createdAt?: string) {
+  if (actionAt && actionAt.length >= 10) {
+    const [y, m, d] = actionAt.slice(0, 10).split('-').map(Number);
+    return new Date(y, (m || 1) - 1, d || 1).toLocaleDateString('en-NZ', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+  return createdAt ? formatDate(createdAt) : '—';
+}
+
 function dealerDisplayName(c: Customer) {
   return (c.companyName?.trim() || c.name || c.customerCode).trim();
 }
@@ -98,7 +119,17 @@ export default function JobsPage() {
   const [jobDetails, setJobDetails] = useState<Record<string, JobDetail>>({});
   const [statusModal, setStatusModal] = useState<{ jobId: string; currentStatus: string; newStatus: string } | null>(null);
   const [remark, setRemark] = useState('');
+  const [actionDate, setActionDate] = useState(toInputDate(new Date()));
   const [statusError, setStatusError] = useState('');
+  const [historyEdit, setHistoryEdit] = useState<{
+    jobId: string;
+    historyId: string;
+    status: string;
+    date: string;
+    notes: string;
+  } | null>(null);
+  const [historyError, setHistoryError] = useState('');
+  const [historySaving, setHistorySaving] = useState(false);
   const [deleteJob, setDeleteJob] = useState<Job | null>(null);
   const [deleteRemarks, setDeleteRemarks] = useState('');
   const [deleteError, setDeleteError] = useState('');
@@ -174,12 +205,16 @@ export default function JobsPage() {
     setShowForm(true);
   };
 
-  const fetchJobDetail = async (jobId: string) => {
-    if (jobDetails[jobId]) return jobDetails[jobId];
+  const refreshJobDetail = async (jobId: string) => {
     const res = await jobsApi.get(jobId);
     const detail = res.data.data as JobDetail;
     setJobDetails((prev) => ({ ...prev, [jobId]: detail }));
     return detail;
+  };
+
+  const fetchJobDetail = async (jobId: string) => {
+    if (jobDetails[jobId]) return jobDetails[jobId];
+    return refreshJobDetail(jobId);
   };
 
   const openDetail = async (jobId: string) => {
@@ -280,6 +315,7 @@ export default function JobsPage() {
     if (currentStatus === newStatus) return;
     setStatusModal({ jobId, currentStatus, newStatus });
     setRemark('');
+    setActionDate(toInputDate(new Date()));
     setStatusError('');
   };
 
@@ -288,17 +324,64 @@ export default function JobsPage() {
       setStatusError('Please enter a remark for this status change');
       return;
     }
+    if (!actionDate) {
+      setStatusError('Please pick the action date');
+      return;
+    }
     try {
-      await jobsApi.updateStatus(statusModal.jobId, statusModal.newStatus, remark.trim());
+      await jobsApi.updateStatus(statusModal.jobId, statusModal.newStatus, remark.trim(), actionDate);
       setStatusModal(null);
       setRemark('');
+      setActionDate(toInputDate(new Date()));
       load();
       if (expandedJobId === statusModal.jobId || detailJobId === statusModal.jobId) {
-        await fetchJobDetail(statusModal.jobId);
+        await refreshJobDetail(statusModal.jobId);
       }
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message;
       setStatusError(msg || 'Failed to update status');
+    }
+  };
+
+  const openHistoryEdit = (jobId: string, item: StatusHistoryItem) => {
+    setHistoryEdit({
+      jobId,
+      historyId: item.id,
+      status: item.toStatus,
+      date: historyDateValue(item),
+      notes: item.notes || '',
+    });
+    setHistoryError('');
+  };
+
+  const submitHistoryEdit = async () => {
+    if (!historyEdit) return;
+    if (!historyEdit.notes.trim()) {
+      setHistoryError('Please enter a remark');
+      return;
+    }
+    if (!historyEdit.date) {
+      setHistoryError('Please pick the action date');
+      return;
+    }
+    setHistorySaving(true);
+    setHistoryError('');
+    try {
+      await jobsApi.updateStatusHistory(historyEdit.jobId, historyEdit.historyId, {
+        status: historyEdit.status,
+        notes: historyEdit.notes.trim(),
+        actionAt: historyEdit.date,
+      });
+      const jobId = historyEdit.jobId;
+      setHistoryEdit(null);
+      setToast('Status action updated');
+      await refreshJobDetail(jobId);
+      load();
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message;
+      setHistoryError(msg || 'Failed to update status action');
+    } finally {
+      setHistorySaving(false);
     }
   };
 
@@ -713,7 +796,16 @@ export default function JobsPage() {
                               </>
                             )}
                             <span className={`badge text-xs ${JOB_STATUS_COLORS[h.toStatus]}`}>{formatStatus(h.toStatus)}</span>
-                            <span className="text-xs text-gray-400">{formatDate(h.createdAt)}</span>
+                            <span className="text-xs text-gray-400">{formatStoredActionDate(h.actionAt, h.createdAt)}</span>
+                            <button
+                              type="button"
+                              onClick={() => openHistoryEdit(job.id, h)}
+                              className="p-1 text-gray-500 hover:bg-gray-100 rounded"
+                              aria-label="Edit this action"
+                              title="Edit this action"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
                           </div>
                           {h.notes && <p className="text-sm text-gray-700 mt-1 bg-gray-50 rounded-lg p-2">{h.notes}</p>}
                           {h.changedBy && (
@@ -834,10 +926,23 @@ export default function JobsPage() {
                   <div>
                     <h4 className="text-sm font-semibold text-gray-700 mb-2">Status History</h4>
                     <div className="space-y-2 max-h-48 overflow-y-auto">
-                      {[...detailJob.statusHistory].reverse().slice(0, 5).map((h) => (
+                      {[...detailJob.statusHistory].reverse().map((h) => (
                         <div key={h.id} className="text-xs bg-gray-50 rounded p-2">
-                          <span className={`badge ${JOB_STATUS_COLORS[h.toStatus]}`}>{formatStatus(h.toStatus)}</span>
-                          <span className="ml-2 text-gray-400">{formatDate(h.createdAt)}</span>
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <span className={`badge ${JOB_STATUS_COLORS[h.toStatus]}`}>{formatStatus(h.toStatus)}</span>
+                              <span className="ml-2 text-gray-400">{formatStoredActionDate(h.actionAt, h.createdAt)}</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => openHistoryEdit(detailJob.id, h)}
+                              className="p-1 text-gray-500 hover:bg-gray-200 rounded"
+                              aria-label="Edit this action"
+                              title="Edit this action"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                           {h.notes && <p className="mt-1 text-gray-600">{h.notes}</p>}
                         </div>
                       ))}
@@ -936,6 +1041,57 @@ export default function JobsPage() {
         </div>
       )}
 
+      {historyEdit && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 space-y-4">
+            <div className="flex justify-between items-start">
+              <div>
+                <h3 className="font-semibold text-lg">Edit status action</h3>
+                <p className="text-sm text-gray-500 mt-1">Update the date, status, or remark for this action.</p>
+              </div>
+              <button type="button" onClick={() => setHistoryEdit(null)} className="p-1 hover:bg-gray-100 rounded">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div>
+              <label className="label">Status *</label>
+              <select
+                className="input"
+                value={historyEdit.status}
+                onChange={(e) => setHistoryEdit({ ...historyEdit, status: e.target.value })}
+              >
+                {JOB_STATUSES.map((s) => <option key={s} value={s}>{formatStatus(s)}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Action date *</label>
+              <input
+                type="date"
+                className="input"
+                value={historyEdit.date}
+                onChange={(e) => { setHistoryEdit({ ...historyEdit, date: e.target.value }); setHistoryError(''); }}
+              />
+            </div>
+            <div>
+              <label className="label">Remark *</label>
+              <textarea
+                className="input"
+                rows={3}
+                value={historyEdit.notes}
+                onChange={(e) => { setHistoryEdit({ ...historyEdit, notes: e.target.value }); setHistoryError(''); }}
+              />
+              {historyError && <p className="text-red-600 text-sm mt-1">{historyError}</p>}
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button type="button" className="btn-secondary" onClick={() => setHistoryEdit(null)}>Cancel</button>
+              <button type="button" className="btn-primary" onClick={submitHistoryEdit} disabled={historySaving}>
+                {historySaving ? 'Saving...' : 'Save action'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {statusModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 space-y-4">
@@ -949,6 +1105,15 @@ export default function JobsPage() {
               <button onClick={() => setStatusModal(null)} className="p-1 hover:bg-gray-100 rounded">
                 <X className="w-5 h-5" />
               </button>
+            </div>
+            <div>
+              <label className="label">Action date *</label>
+              <input
+                type="date"
+                className="input"
+                value={actionDate}
+                onChange={(e) => { setActionDate(e.target.value); setStatusError(''); }}
+              />
             </div>
             <div>
               <label className="label">Remark *</label>

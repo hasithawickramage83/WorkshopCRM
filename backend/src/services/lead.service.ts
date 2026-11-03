@@ -24,6 +24,7 @@ export class LeadService {
       ...(query.search && {
         OR: [
           { customerName: { contains: query.search, mode: 'insensitive' } },
+          { vehicleNo: { contains: query.search, mode: 'insensitive' } },
           { companyName: { contains: query.search, mode: 'insensitive' } },
           { phone: { contains: query.search, mode: 'insensitive' } },
         ],
@@ -71,6 +72,7 @@ export class LeadService {
 
   async create(data: {
     customerName: string;
+    vehicleNo: string;
     company?: BusinessCompany;
     companyName?: string;
     phone?: string;
@@ -84,6 +86,7 @@ export class LeadService {
     const lead = await prisma.lead.create({
       data: {
         customerName: data.customerName,
+        vehicleNo: data.vehicleNo.trim().toUpperCase(),
         company: data.company || 'CEYLON_AUTOMOBILE',
         companyName: data.companyName,
         phone: data.phone,
@@ -103,6 +106,7 @@ export class LeadService {
     whatsappService.notifyLeadCreated({
       leadCode: mapped.leadCode,
       customerName: mapped.customerName,
+      vehicleNo: mapped.vehicleNo,
       phone: mapped.phone,
       source: mapped.source,
       estimatedPrice: mapped.estimatedPrice ?? null,
@@ -113,6 +117,7 @@ export class LeadService {
 
   async update(id: string, data: {
     customerName?: string;
+    vehicleNo?: string;
     company?: BusinessCompany;
     companyName?: string;
     phone?: string;
@@ -129,6 +134,7 @@ export class LeadService {
       where: { id },
       data: {
         customerName: data.customerName,
+        vehicleNo: data.vehicleNo === undefined ? undefined : data.vehicleNo.trim().toUpperCase(),
         company: data.company,
         companyName: data.companyName,
         phone: data.phone,

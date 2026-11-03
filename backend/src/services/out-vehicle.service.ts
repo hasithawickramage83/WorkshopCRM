@@ -1,4 +1,4 @@
-import { OutInvoiceType, Prisma } from '@prisma/client';
+import { JobStatus, OutInvoiceType, Prisma } from '@prisma/client';
 import prisma from '../utils/prisma';
 import { AppError } from '../utils/response';
 import { jobAmountWithGst, softDeleteFilter, toNumber } from '../utils/helpers';
@@ -46,7 +46,70 @@ const jobSelect = {
     orderBy: { createdAt: 'desc' as const },
     take: 1,
   },
+  statusHistory: {
+    where: { toStatus: 'CLOSED' as const },
+    orderBy: [{ actionAt: 'desc' as const }, { createdAt: 'desc' as const }],
+    take: 1,
+    select: { actionAt: true, createdAt: true },
+  },
 };
+
+function toYmd(value?: Date | string | null) {
+  if (!value) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
+function parseClosedDate(value?: string | null) {
+  const raw = value?.trim() || '';
+  if (!raw) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    throw new AppError(400, 'Invalid job closed date', 'INVALID_DATE');
+  }
+  const [year, month, day] = raw.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+}
+
+async function applyJobClosed(
+  tx: Prisma.TransactionClient,
+  job: { id: string; status: string },
+  closedDate: Date,
+  userId?: string,
+  notes?: string,
+) {
+  if (job.status !== 'CLOSED') {
+    await tx.job.update({
+      where: { id: job.id },
+      data: { status: 'CLOSED', updatedById: userId },
+    });
+  }
+
+  const existing = await tx.jobStatusHistory.findFirst({
+    where: { jobId: job.id, toStatus: 'CLOSED' },
+    orderBy: [{ actionAt: 'desc' }, { createdAt: 'desc' }],
+  });
+
+  const remark = notes || 'Job closed from Out Vehicles';
+  if (existing) {
+    await tx.jobStatusHistory.update({
+      where: { id: existing.id },
+      data: { actionAt: closedDate, notes: remark },
+    });
+    return;
+  }
+
+  await tx.jobStatusHistory.create({
+    data: {
+      jobId: job.id,
+      fromStatus: job.status as JobStatus,
+      toStatus: 'CLOSED',
+      notes: remark,
+      actionAt: closedDate,
+      changedById: userId,
+    },
+  });
+}
 
 function mapJob(job: {
   estimatedPrice?: unknown;
@@ -56,9 +119,11 @@ function mapJob(job: {
   outDate?: Date | null;
   subTasks: { price?: unknown }[];
   invoices: { id: string; invoiceNumber: string; total: unknown; paymentStatus: string }[];
+  statusHistory?: { actionAt?: Date | null; createdAt: Date }[];
 }) {
-  const { invoices, estimatedPrice, subTasks, ...rest } = job;
+  const { invoices, estimatedPrice, subTasks, statusHistory, ...rest } = job;
   const invoice = invoices[0] || null;
+  const closed = statusHistory?.[0];
   const jobAmount = invoice
     ? toNumber(invoice.total as never)
     : jobAmountWithGst(subTasks, estimatedPrice, job);
@@ -68,6 +133,7 @@ function mapJob(job: {
     estimatedPrice: toNumber(estimatedPrice as never),
     jobAmount,
     isOut: !!rest.outDate,
+    jobClosedDate: toYmd(closed?.actionAt || closed?.createdAt || null),
     invoice: invoice
       ? {
           id: invoice.id,
@@ -202,6 +268,7 @@ export class OutVehicleService {
     outInvoiceNumber?: string | null;
     outNotes?: string | null;
     markCompleted?: boolean;
+    jobClosedDate?: string | null;
   }, userId?: string) {
     const job = await prisma.job.findFirst({
       where: { id: jobId, ...softDeleteFilter() },
@@ -212,23 +279,33 @@ export class OutVehicleService {
     }
 
     const outDate = parseDateOnly(data.outDate);
+    const closedAt = parseClosedDate(data.jobClosedDate);
+    const shouldComplete = !closedAt
+      && data.markCompleted !== false
+      && !['COMPLETED', 'INVOICED', 'CLOSED'].includes(job.status);
+
     const updated = await prisma.$transaction(async (tx) => {
-      const next = await tx.job.update({
+      await tx.job.update({
         where: { id: jobId },
         data: {
           outDate,
           outInvoiceType: data.outInvoiceType,
           outInvoiceNumber: data.outInvoiceNumber?.trim() || null,
           outNotes: data.outNotes?.trim() || null,
-          ...(data.markCompleted !== false && !['COMPLETED', 'INVOICED', 'CLOSED'].includes(job.status)
-            ? { status: 'COMPLETED' }
-            : {}),
+          ...(shouldComplete ? { status: 'COMPLETED' } : {}),
           updatedById: userId,
         },
-        select: jobSelect,
       });
 
-      if (data.markCompleted !== false && !['COMPLETED', 'INVOICED', 'CLOSED'].includes(job.status)) {
+      if (closedAt) {
+        await applyJobClosed(
+          tx,
+          job,
+          closedAt,
+          userId,
+          `Job closed from Out Vehicles · ${data.outInvoiceType} invoice${data.outInvoiceNumber ? ` ${data.outInvoiceNumber}` : ''}`,
+        );
+      } else if (shouldComplete) {
         await tx.jobStatusHistory.create({
           data: {
             jobId,
@@ -240,7 +317,7 @@ export class OutVehicleService {
         });
       }
 
-      return next;
+      return tx.job.findFirstOrThrow({ where: { id: jobId }, select: jobSelect });
     });
 
     const mapped = mapJob(updated);
@@ -255,6 +332,7 @@ export class OutVehicleService {
     outInvoiceNumber?: string | null;
     outNotes?: string | null;
     clearOut?: boolean;
+    jobClosedDate?: string | null;
   }, userId?: string) {
     const job = await prisma.job.findFirst({
       where: { id: jobId, ...softDeleteFilter() },
@@ -280,18 +358,32 @@ export class OutVehicleService {
       throw new AppError(400, 'Vehicle is not marked out yet', 'NOT_OUT');
     }
 
-    const updated = await prisma.job.update({
-      where: { id: jobId },
-      data: {
-        outDate: data.outDate ? parseDateOnly(data.outDate) : undefined,
-        outInvoiceType: data.outInvoiceType,
-        outInvoiceNumber: data.outInvoiceNumber === undefined
-          ? undefined
-          : (data.outInvoiceNumber?.trim() || null),
-        outNotes: data.outNotes === undefined ? undefined : (data.outNotes?.trim() || null),
-        updatedById: userId,
-      },
-      select: jobSelect,
+    const closedAt = parseClosedDate(data.jobClosedDate);
+    const updated = await prisma.$transaction(async (tx) => {
+      await tx.job.update({
+        where: { id: jobId },
+        data: {
+          outDate: data.outDate ? parseDateOnly(data.outDate) : undefined,
+          outInvoiceType: data.outInvoiceType,
+          outInvoiceNumber: data.outInvoiceNumber === undefined
+            ? undefined
+            : (data.outInvoiceNumber?.trim() || null),
+          outNotes: data.outNotes === undefined ? undefined : (data.outNotes?.trim() || null),
+          updatedById: userId,
+        },
+      });
+
+      if (closedAt) {
+        await applyJobClosed(
+          tx,
+          job,
+          closedAt,
+          userId,
+          'Job closed from Out Vehicles',
+        );
+      }
+
+      return tx.job.findFirstOrThrow({ where: { id: jobId }, select: jobSelect });
     });
 
     return mapJob(updated);

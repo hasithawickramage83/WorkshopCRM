@@ -64,6 +64,14 @@ export interface Employee {
   notes?: string | null;
   hourlyRate?: number | null;
   isActive?: boolean;
+  userId?: string | null;
+  user?: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    isActive?: boolean;
+  } | null;
   createdAt: string;
 }
 
@@ -190,6 +198,10 @@ export function jobShouldAddGst(job?: {
 
 export const JOB_SUB_TASK_TYPES = [
   { value: 'PAINTING', label: 'Painting' },
+  { value: 'SANDING', label: 'Sanding' },
+  { value: 'POLISH', label: 'Polish' },
+  { value: 'PARKING', label: 'Parking vehicles' },
+  { value: 'CLEANING', label: 'Cleaning' },
   { value: 'INSTALLATION', label: 'Installation' },
   { value: 'PARTS', label: 'Parts' },
   { value: 'PANEL_BEATING', label: 'Panel Beating' },
@@ -203,6 +215,22 @@ export const JOB_SUB_TASK_TYPES = [
 
 export const formatSubTaskType = (type?: string | null) =>
   JOB_SUB_TASK_TYPES.find((t) => t.value === type)?.label || formatStatus(type || 'OTHER');
+
+export const WINZ_QUOTE = {
+  name: 'WEST PANEL, PAINT & TYRES',
+  services: 'Panel Beating | Spray Painting | Tyres | Auto Parts',
+  phone: '021 21 471 60',
+  phone2: '022 375 5628',
+  email: 'admin@ceylonautomobile.co.nz',
+  email2: 'westppt1@gmail.com',
+  address: '6E Cartwright Road, Kelston, Auckland 0602',
+  gstNumber: '132-431-744',
+  winzReg: 'CU0021 44265',
+  bankName: 'ANZ',
+  bankAccountName: 'West ppt',
+  bankAccountNumber: '0601 85090575300',
+  terms: 'Only bank transfer accepted',
+};
 
 export const COMPANY_INVOICE = {
   name: 'CEYLON AUTOMOBILE',

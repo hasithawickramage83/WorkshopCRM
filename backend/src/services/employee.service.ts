@@ -3,7 +3,15 @@ import { generateCode, parsePagination, softDeleteFilter, toNumber } from '../ut
 import { AppError } from '../utils/response';
 import { Prisma } from '@prisma/client';
 
-type EmployeeRow = Prisma.EmployeeGetPayload<object>;
+const userSelect = {
+  id: true,
+  firstName: true,
+  lastName: true,
+  email: true,
+  isActive: true,
+} as const;
+
+type EmployeeRow = Prisma.EmployeeGetPayload<{ include: { user: { select: typeof userSelect } } }>;
 
 function mapEmployee(employee: EmployeeRow) {
   return {
@@ -12,7 +20,42 @@ function mapEmployee(employee: EmployeeRow) {
   };
 }
 
+async function resolveUserId(userId?: string | null) {
+  const id = userId?.trim() || '';
+  if (!id) return null;
+  const user = await prisma.user.findFirst({
+    where: { id, deletedAt: null },
+    select: { id: true },
+  });
+  if (!user) throw new AppError(400, 'Linked login user was not found', 'USER_NOT_FOUND');
+  return user.id;
+}
+
+async function assertUserAvailable(userId: string | null, employeeId?: string) {
+  if (!userId) return;
+  const taken = await prisma.employee.findFirst({
+    where: {
+      userId,
+      ...softDeleteFilter(),
+      ...(employeeId ? { id: { not: employeeId } } : {}),
+    },
+    select: { name: true, employeeCode: true },
+  });
+  if (taken) {
+    throw new AppError(400, `This login is already linked to ${taken.name} (${taken.employeeCode})`, 'USER_LINKED');
+  }
+}
+
 export class EmployeeService {
+  async listUsers() {
+    const users = await prisma.user.findMany({
+      where: { deletedAt: null, isActive: true },
+      select: userSelect,
+      orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+    });
+    return { users };
+  }
+
   async list(query: { page?: string; limit?: string; search?: string; activeOnly?: string }) {
     const { page, limit, skip } = parsePagination(query);
     const activeOnly = query.activeOnly === 'true' || query.activeOnly === '1';
@@ -35,6 +78,7 @@ export class EmployeeService {
         where,
         skip,
         take: limit,
+        include: { user: { select: userSelect } },
         orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
       }),
       prisma.employee.count({ where }),
@@ -46,6 +90,7 @@ export class EmployeeService {
   async getById(id: string) {
     const employee = await prisma.employee.findFirst({
       where: { id, ...softDeleteFilter() },
+      include: { user: { select: userSelect } },
     });
     if (!employee) throw new AppError(404, 'Employee not found', 'NOT_FOUND');
     return mapEmployee(employee);
@@ -59,7 +104,10 @@ export class EmployeeService {
     notes?: string | null;
     hourlyRate?: number | null;
     isActive?: boolean;
+    userId?: string | null;
   }, userId?: string) {
+    const linkedUserId = await resolveUserId(data.userId);
+    await assertUserAvailable(linkedUserId);
     const employee = await prisma.employee.create({
       data: {
         employeeCode: generateCode('EM'),
@@ -70,8 +118,10 @@ export class EmployeeService {
         notes: data.notes?.trim() || null,
         hourlyRate: data.hourlyRate == null ? null : data.hourlyRate,
         isActive: data.isActive !== undefined ? !!data.isActive : true,
+        userId: linkedUserId,
         createdById: userId,
       },
+      include: { user: { select: userSelect } },
     });
     return mapEmployee(employee);
   }
@@ -84,8 +134,13 @@ export class EmployeeService {
     notes?: string | null;
     hourlyRate?: number | null;
     isActive?: boolean;
+    userId?: string | null;
   }, userId?: string) {
     await this.getById(id);
+    const linkedUserId = data.userId === undefined ? undefined : await resolveUserId(data.userId);
+    if (linkedUserId !== undefined) {
+      await assertUserAvailable(linkedUserId, id);
+    }
     const employee = await prisma.employee.update({
       where: { id },
       data: {
@@ -96,8 +151,10 @@ export class EmployeeService {
         ...(data.notes !== undefined ? { notes: data.notes?.trim() || null } : {}),
         ...(data.hourlyRate !== undefined ? { hourlyRate: data.hourlyRate } : {}),
         ...(data.isActive !== undefined ? { isActive: !!data.isActive } : {}),
+        ...(linkedUserId !== undefined ? { userId: linkedUserId } : {}),
         updatedById: userId,
       },
+      include: { user: { select: userSelect } },
     });
     return mapEmployee(employee);
   }
@@ -106,7 +163,7 @@ export class EmployeeService {
     await this.getById(id);
     return prisma.employee.update({
       where: { id },
-      data: { deletedAt: new Date(), updatedById: userId },
+      data: { deletedAt: new Date(), userId: null, updatedById: userId },
     });
   }
 }

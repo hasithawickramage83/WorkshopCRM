@@ -1,6 +1,6 @@
 import {
   LayoutDashboard, Users, Car, UserPlus, Wrench, ClipboardList, Boxes, Package,
-  Shield, FileText, Receipt, Wallet, Bot, BarChart3, Clock, UserCog, CarFront, MessageCircle, Truck, HardHat, Timer, type LucideIcon,
+  Shield, FileText, Receipt, Wallet, Bot, BarChart3, Clock, UserCog, CarFront, MessageCircle, Truck, HardHat, Timer, RotateCcw, type LucideIcon,
 } from 'lucide-react';
 
 export type PageKey =
@@ -9,15 +9,18 @@ export type PageKey =
   | 'suppliers'
   | 'employees'
   | 'labour-hours'
+  | 'labour-tasks'
   | 'vehicles'
   | 'leads'
   | 'jobs'
   | 'register'
   | 'out-vehicles'
+  | 'return-jobs'
   | 'inventory'
   | 'parts-sales'
   | 'insurance'
   | 'quotations'
+  | 'winz-quotes'
   | 'invoices'
   | 'finance'
   | 'ai'
@@ -39,15 +42,18 @@ export const APP_PAGES: AppPage[] = [
   { key: 'suppliers', path: '/suppliers', label: 'Suppliers', icon: Truck },
   { key: 'employees', path: '/employees', label: 'Employees', icon: HardHat },
   { key: 'labour-hours', path: '/labour-hours', label: 'Labour hours', icon: Timer },
+  { key: 'labour-tasks', path: '/labour-tasks', label: 'Labour tasks', icon: ClipboardList },
   { key: 'vehicles', path: '/vehicles', label: 'Vehicles', icon: Car },
   { key: 'leads', path: '/leads', label: 'Leads', icon: UserPlus },
   { key: 'jobs', path: '/jobs', label: 'Jobs', icon: Wrench },
   { key: 'register', path: '/register', label: 'Job Registration', icon: ClipboardList },
   { key: 'out-vehicles', path: '/out-vehicles', label: 'Out Vehicles', icon: CarFront },
+  { key: 'return-jobs', path: '/return-jobs', label: 'Return jobs', icon: RotateCcw },
   { key: 'inventory', path: '/inventory', label: 'Inventory', icon: Boxes },
   { key: 'parts-sales', path: '/parts-sales', label: 'Parts Sales', icon: Package },
   { key: 'insurance', path: '/insurance', label: 'Insurance', icon: Shield },
   { key: 'quotations', path: '/quotations', label: 'Quotations', icon: FileText },
+  { key: 'winz-quotes', path: '/winz-quotes', label: 'WINZ quotes', icon: FileText },
   { key: 'invoices', path: '/invoices', label: 'Invoices', icon: Receipt },
   { key: 'finance', path: '/finance', label: 'Finance', icon: Wallet },
   { key: 'ai', path: '/ai', label: 'AI Assistant', icon: Bot },

@@ -36,6 +36,21 @@ function formatNzDay(date: Date) {
   });
 }
 
+function toDecimalHours(hours: number, minutes?: number | null) {
+  const mins = Math.max(0, Math.min(59, Math.round(minutes || 0)));
+  return roundMoney(Math.max(0, hours) + mins / 60);
+}
+
+function formatHoursMinutes(decimalHours: number) {
+  const totalMinutes = Math.round(Math.max(0, decimalHours) * 60);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours && minutes) return `${hours}h ${minutes}m`;
+  if (hours) return `${hours}h`;
+  if (minutes) return `${minutes}m`;
+  return '0h';
+}
+
 function mapEmployee(employee: {
   id: string;
   employeeCode: string;
@@ -135,6 +150,7 @@ export class LabourHoursService {
     rows: Array<{
       employeeId: string;
       hours: number;
+      minutes?: number | null;
       workedDays?: number | null;
       hourlyRate?: number | null;
       notes?: string | null;
@@ -155,7 +171,7 @@ export class LabourHoursService {
 
     await prisma.$transaction(async (tx) => {
       for (const row of data.rows) {
-        const hours = roundMoney(row.hours);
+        const hours = toDecimalHours(row.hours, row.minutes);
         const workedDays = Math.max(0, Math.min(7, Math.round(row.workedDays || 0)));
         const hourlyRate = row.hourlyRate == null ? null : roundMoney(row.hourlyRate);
         const notes = row.notes?.trim() || null;
@@ -196,7 +212,7 @@ export class LabourHoursService {
         const totalAmount = roundMoney(hours * resolvedRate);
         const expenseNotes = [
           `${workedDays} day${workedDays === 1 ? '' : 's'}`,
-          `${hours}h × $${resolvedRate.toFixed(2)}/h`,
+          `${formatHoursMinutes(hours)} × $${resolvedRate.toFixed(2)}/h`,
           notes,
         ].filter(Boolean).join(' · ');
         const reference = `LH-${employee.employeeCode}-${toYmd(weekStart).replace(/-/g, '')}`;

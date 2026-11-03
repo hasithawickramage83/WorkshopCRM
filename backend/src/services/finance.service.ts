@@ -12,14 +12,22 @@ import { AppError } from '../utils/response';
 import { softDeleteFilter, toNumber, roundMoney, jobAmountWithGst, generateCode, calculateInvoiceGstTotals } from '../utils/helpers';
 
 function parseDateOnly(value: string, endOfDay = false) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || '').trim());
+  if (m) {
+    const y = Number(m[1]);
+    const month = Number(m[2]) - 1;
+    const day = Number(m[3]);
+    if (endOfDay) return new Date(Date.UTC(y, month, day, 23, 59, 59, 999));
+    return new Date(Date.UTC(y, month, day, 0, 0, 0, 0));
+  }
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) {
     throw new AppError(400, 'Invalid date', 'INVALID_DATE');
   }
   if (endOfDay) {
-    d.setHours(23, 59, 59, 999);
+    d.setUTCHours(23, 59, 59, 999);
   } else {
-    d.setHours(0, 0, 0, 0);
+    d.setUTCHours(0, 0, 0, 0);
   }
   return d;
 }
@@ -54,6 +62,159 @@ function paymentLabel(status: InvoicePaymentStatus | string, balance: number) {
   if (status === 'PAID' || balance <= 0.009) return 'Paid';
   if (status === 'PARTIALLY_PAID') return 'Partial / receivable';
   return 'Receivable';
+}
+
+function workshopJobSelect(): Prisma.JobSelect {
+  return {
+    id: true,
+    jobNumber: true,
+    status: true,
+    jobType: true,
+    receivedDate: true,
+    outDate: true,
+    estimatedPrice: true,
+    addGst: true,
+    jobCategory: true,
+    jobSource: true,
+    customer: { select: { name: true } },
+    vehicle: { select: { registrationNo: true, make: true, model: true } },
+    subTasks: { select: { price: true } },
+    invoices: {
+      where: softDeleteFilter(),
+      orderBy: { createdAt: 'desc' },
+      take: 1,
+      select: {
+        total: true,
+        amountPaid: true,
+        paymentStatus: true,
+        invoiceNumber: true,
+      },
+    },
+    collections: {
+      where: softDeleteFilter(),
+      select: { amount: true },
+    },
+  };
+}
+
+function localYmd(value: Date) {
+  const y = value.getFullYear();
+  const m = String(value.getMonth() + 1).padStart(2, '0');
+  const d = String(value.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/** Closed and completed dates are stored as noon UTC on the chosen calendar day. */
+function statusEventYmd(actionAt: Date | null | undefined, createdAt: Date) {
+  if (actionAt) return actionAt.toISOString().slice(0, 10);
+  return localYmd(createdAt);
+}
+
+async function completedOrClosedVehicles(start: Date, end: Date) {
+  const fromKey = localYmd(start);
+  const toKey = localYmd(end);
+  const utcStart = new Date(`${fromKey}T00:00:00.000Z`);
+  const utcEnd = new Date(`${toKey}T23:59:59.999Z`);
+
+  const windowEvents = await prisma.jobStatusHistory.findMany({
+    where: {
+      toStatus: { in: ['COMPLETED', 'CLOSED'] },
+      job: {
+        deletedAt: null,
+        status: { in: ['COMPLETED', 'CLOSED', 'INVOICED'] },
+      },
+      OR: [
+        { actionAt: { gte: utcStart, lte: utcEnd } },
+        { actionAt: null, createdAt: { gte: start, lte: end } },
+      ],
+    },
+    select: { jobId: true },
+  });
+
+  const jobIds = [...new Set(windowEvents.map((event) => event.jobId))];
+  if (!jobIds.length) return [];
+
+  const events = await prisma.jobStatusHistory.findMany({
+    where: {
+      jobId: { in: jobIds },
+      toStatus: { in: ['COMPLETED', 'CLOSED'] },
+    },
+    select: {
+      jobId: true,
+      toStatus: true,
+      actionAt: true,
+      createdAt: true,
+      job: { select: workshopJobSelect() },
+    },
+  });
+
+  const byJob = new Map<string, typeof events>();
+  for (const event of events) {
+    const list = byJob.get(event.jobId) || [];
+    list.push(event);
+    byJob.set(event.jobId, list);
+  }
+
+  const rows = [];
+  for (const list of byJob.values()) {
+    const closed = list.filter((event) => event.toStatus === 'CLOSED');
+    const completed = list.filter((event) => event.toStatus === 'COMPLETED');
+    const source = closed.length ? closed : completed;
+    const chosen = source
+      .map((event) => ({ event, ymd: statusEventYmd(event.actionAt, event.createdAt) }))
+      .sort((a, b) => b.ymd.localeCompare(a.ymd))[0];
+    if (!chosen || chosen.ymd < fromKey || chosen.ymd > toKey) continue;
+
+    const mapped = mapWorkshopVehicle(chosen.event.job, 'receivedDate');
+    rows.push({
+      ...mapped,
+      date: chosen.ymd,
+      eventStatus: chosen.event.toStatus,
+    });
+  }
+
+  rows.sort((a, b) => String(b.date).localeCompare(String(a.date)) || b.jobNumber.localeCompare(a.jobNumber));
+  return rows;
+}
+
+function mapWorkshopVehicle(
+  job: {
+    id: string;
+    jobNumber: string;
+    status: string;
+    jobType: string;
+    receivedDate: Date;
+    outDate: Date | null;
+    estimatedPrice?: Prisma.Decimal | number | null;
+    addGst?: boolean | null;
+    jobCategory?: string | null;
+    jobSource?: string | null;
+    subTasks?: { price?: unknown }[];
+    invoices?: Array<{
+      total?: unknown;
+      amountPaid?: unknown;
+      paymentStatus?: InvoicePaymentStatus | string | null;
+      invoiceNumber?: string | null;
+    }>;
+    collections?: Array<{ amount?: unknown }>;
+    customer: { name: string } | null;
+    vehicle: { registrationNo: string; make: string; model: string } | null;
+  },
+  dateField: 'receivedDate' | 'outDate',
+) {
+  const fin = jobFinanceSnapshot(job);
+  const vehicleLabel = [job.vehicle?.make, job.vehicle?.model].filter(Boolean).join(' ');
+  return {
+    id: job.id,
+    date: job[dateField],
+    jobNumber: job.jobNumber,
+    customer: job.customer?.name || '—',
+    registrationNo: job.vehicle?.registrationNo || '—',
+    vehicle: vehicleLabel || '—',
+    status: job.status,
+    jobType: job.jobType,
+    repairPrice: fin.amount,
+  };
 }
 
 function jobFinanceSnapshot(job: {
@@ -97,13 +258,29 @@ function jobFinanceSnapshot(job: {
 
 
 type PayableExpenseLike = {
+  id?: string;
   amount?: unknown;
   category?: string | null;
+  materialType?: string | null;
+  outsourceType?: string | null;
   otherType?: string | null;
+  description?: string | null;
+  paymentMethod?: string | null;
+  reference?: string | null;
+  isPayable?: boolean;
   employeeId?: string | null;
   supplierId?: string | null;
+  expenseDate?: Date | string | null;
+  createdAt?: Date | string | null;
   employee?: { id: string; name: string; employeeCode?: string | null } | null;
   supplier?: { id: string; name: string; supplierCode?: string | null } | null;
+};
+
+type NettedPayable = PayableExpenseLike & {
+  originalAmount: number;
+  paidAmount: number;
+  remainingAmount: number;
+  amount: number;
 };
 
 function getPayablePartyMeta(e: PayableExpenseLike) {
@@ -118,7 +295,7 @@ function getPayablePartyMeta(e: PayableExpenseLike) {
     kind = isLabour ? 'labour' : 'salary';
     if (e.employee?.id || e.employeeId) {
       const empId = e.employee?.id || e.employeeId!;
-      id = `${kind}:employee:${empId}`;
+      id = `employee:${empId}`;
       name = e.employee?.name || 'Unknown employee';
       code = e.employee?.employeeCode || null;
     } else {
@@ -239,6 +416,189 @@ function buildPayablesByType(expenses: PayableExpenseLike[]) {
     .filter((row): row is { id: string; label: string; amount: number; count: number } => !!row);
 }
 
+const payablePartySelect = {
+  id: true,
+  amount: true,
+  category: true,
+  otherType: true,
+  isPayable: true,
+  supplierId: true,
+  employeeId: true,
+  expenseDate: true,
+  createdAt: true,
+  supplier: { select: { id: true, name: true, supplierCode: true } },
+  employee: { select: { id: true, name: true, employeeCode: true } },
+} as const;
+
+/** Credit payables recorded on or before the period end (not clipped to the week start). */
+function payableWhereUpTo(end: Date): Prisma.ExpenseWhereInput {
+  return {
+    ...softDeleteFilter(),
+    isPayable: true,
+    expenseDate: { lte: end },
+  };
+}
+
+function paidWhereUpTo(end: Date): Prisma.ExpenseWhereInput {
+  return {
+    ...softDeleteFilter(),
+    isPayable: false,
+    expenseDate: { lte: end },
+  };
+}
+
+function payableTime(value?: Date | string | null) {
+  if (!value) return 0;
+  const t = new Date(value).getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
+
+/** Runtime only: due = payable − paid to the same party. Does not write to the database. */
+function netPayableSummaries(
+  payableExpenses: PayableExpenseLike[],
+  paidExpenses: PayableExpenseLike[],
+) {
+  const paidByParty = new Map<string, number>();
+  for (const e of paidExpenses) {
+    const { id } = getPayablePartyMeta(e);
+    paidByParty.set(id, roundMoney((paidByParty.get(id) || 0) + toNumber(e.amount as never)));
+  }
+
+  const paidRemaining = new Map(paidByParty);
+  const netted: NettedPayable[] = [...payableExpenses]
+    .sort((a, b) => {
+      const dateDiff = payableTime(a.expenseDate) - payableTime(b.expenseDate);
+      if (dateDiff !== 0) return dateDiff;
+      const createdDiff = payableTime(a.createdAt) - payableTime(b.createdAt);
+      if (createdDiff !== 0) return createdDiff;
+      return String(a.id || '').localeCompare(String(b.id || ''));
+    })
+    .map((e) => {
+      const originalAmount = roundMoney(toNumber(e.amount as never));
+      const partyId = getPayablePartyMeta(e).id;
+      const available = paidRemaining.get(partyId) || 0;
+      const applied = roundMoney(Math.min(originalAmount, available));
+      const remainingAmount = roundMoney(Math.max(0, originalAmount - applied));
+      paidRemaining.set(partyId, roundMoney(Math.max(0, available - applied)));
+      return {
+        ...e,
+        originalAmount,
+        paidAmount: applied,
+        remainingAmount,
+        amount: remainingAmount,
+      };
+    });
+
+  const originalByParty = new Map(buildPayablesByParty(payableExpenses).map((p) => [p.id, p]));
+  const kindOrder: Record<string, number> = {
+    labour: 0,
+    salary: 1,
+    outsource: 2,
+    supplier: 3,
+    other: 4,
+    unassigned: 5,
+  };
+  const payablesByParty = Array.from(originalByParty.values())
+    .map((p) => {
+      const paidTotal = paidByParty.get(p.id) || 0;
+      return {
+        ...p,
+        originalAmount: p.amount,
+        paidAmount: paidTotal,
+        amount: roundMoney(Math.max(0, p.amount - paidTotal)),
+        count: p.count,
+      };
+    })
+    .sort((a, b) => {
+      const ka = kindOrder[a.kind] ?? 9;
+      const kb = kindOrder[b.kind] ?? 9;
+      if (ka !== kb) return ka - kb;
+      if (Math.abs(b.amount - a.amount) > 0.009) return b.amount - a.amount;
+      return a.name.localeCompare(b.name);
+    });
+
+  return {
+    netted,
+    payablesByParty,
+    payablesByType: buildPayablesByType(netted).filter((row) => row.amount > 0.009),
+    totalPayables: roundMoney(payablesByParty.reduce((s, p) => s + p.amount, 0)),
+  };
+}
+
+function labourWeekEnd(weekStart: Date) {
+  const end = new Date(weekStart);
+  end.setDate(end.getDate() + 6);
+  end.setHours(23, 59, 59, 999);
+  return end;
+}
+
+function labourWeeksOverlapping(start: Date, end: Date) {
+  const lookback = new Date(start);
+  lookback.setDate(lookback.getDate() - 6);
+  lookback.setHours(0, 0, 0, 0);
+  return {
+    lookback,
+    overlaps: (weekStart: Date) => {
+      const weekEnd = labourWeekEnd(weekStart);
+      return weekStart <= end && weekEnd >= start;
+    },
+  };
+}
+
+function summarizeLabourHours(
+  rows: Array<{
+    hours?: unknown;
+    workedDays?: number | null;
+    totalAmount?: unknown;
+    employee?: { id: string; name: string; employeeCode?: string | null } | null;
+  }>,
+) {
+  const map = new Map<string, {
+    employeeId: string;
+    name: string;
+    code: string | null;
+    workedDays: number;
+    hours: number;
+    allocatedSalary: number;
+    weekCount: number;
+  }>();
+
+  for (const row of rows) {
+    const emp = row.employee;
+    if (!emp?.id) continue;
+    const hours = roundMoney(toNumber(row.hours as never));
+    const salary = roundMoney(toNumber(row.totalAmount as never));
+    const days = row.workedDays || 0;
+    const existing = map.get(emp.id);
+    if (existing) {
+      existing.workedDays += days;
+      existing.hours = roundMoney(existing.hours + hours);
+      existing.allocatedSalary = roundMoney(existing.allocatedSalary + salary);
+      existing.weekCount += 1;
+    } else {
+      map.set(emp.id, {
+        employeeId: emp.id,
+        name: emp.name,
+        code: emp.employeeCode || null,
+        workedDays: days,
+        hours,
+        allocatedSalary: salary,
+        weekCount: 1,
+      });
+    }
+  }
+
+  const labourByEmployee = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  return {
+    labourByEmployee,
+    labourHoursTotals: {
+      workedDays: labourByEmployee.reduce((s, r) => s + r.workedDays, 0),
+      hours: roundMoney(labourByEmployee.reduce((s, r) => s + r.hours, 0)),
+      allocatedSalary: roundMoney(labourByEmployee.reduce((s, r) => s + r.allocatedSalary, 0)),
+    },
+  };
+}
+
 class ExpenseService {
   private expenseInclude = {
     job: {
@@ -323,7 +683,8 @@ class ExpenseService {
     }
 
     const page = Math.max(1, Number(query.page) || 1);
-    const limit = Math.min(500, Math.max(1, Number(query.limit) || 100));
+    // Long date ranges (e.g. Jun–Dec) can exceed a few hundred rows; do not silently truncate.
+    const limit = Math.min(10000, Math.max(1, Number(query.limit) || 100));
     const skip = (page - 1) * limit;
 
     const [expenses, total] = await Promise.all([
@@ -791,7 +1152,7 @@ class CollectionService {
     }
 
     const page = Math.max(1, Number(query.page) || 1);
-    const limit = Math.min(500, Math.max(1, Number(query.limit) || 100));
+    const limit = Math.min(10000, Math.max(1, Number(query.limit) || 100));
     const skip = (page - 1) * limit;
 
     const [collections, total] = await Promise.all([
@@ -1435,6 +1796,9 @@ class FinanceReportService {
       invoices,
       collections,
       expenses,
+      payableExpenses,
+      paidToParties,
+      labourWeekRows,
     ] = await Promise.all([
       prisma.job.count({
         where: {
@@ -1472,15 +1836,29 @@ class FinanceReportService {
         where: {
           ...softDeleteFilter(),
           expenseDate: { gte: start, lte: end },
+          isPayable: false,
+        },
+        select: payablePartySelect,
+      }),
+      prisma.expense.findMany({
+        where: payableWhereUpTo(end),
+        select: payablePartySelect,
+      }),
+      prisma.expense.findMany({
+        where: paidWhereUpTo(end),
+        select: payablePartySelect,
+      }),
+      prisma.labourWeeklyHours.findMany({
+        where: {
+          weekStart: { gte: labourWeeksOverlapping(start, end).lookback, lte: end },
+          employee: { deletedAt: null },
         },
         select: {
-          amount: true,
-          category: true,
-          otherType: true,
-          isPayable: true,
-          supplierId: true,
+          weekStart: true,
+          hours: true,
+          workedDays: true,
+          totalAmount: true,
           employeeId: true,
-          supplier: { select: { id: true, name: true, supplierCode: true } },
           employee: { select: { id: true, name: true, employeeCode: true } },
         },
       }),
@@ -1495,8 +1873,7 @@ class FinanceReportService {
     ) / 100;
     const otherPaymentsCollected = Math.round((totalPaymentsReceived - cashCollected) * 100) / 100;
 
-    const paidExpenses = expenses.filter((e) => !e.isPayable);
-    const payableExpenses = expenses.filter((e) => e.isPayable);
+    const paidExpenses = expenses;
 
     const labourExpenses = Math.round(
       paidExpenses.filter((e) => e.category === 'LABOUR').reduce((s, e) => s + toNumber(e.amount), 0) * 100,
@@ -1510,11 +1887,26 @@ class FinanceReportService {
         .reduce((s, e) => s + toNumber(e.amount), 0) * 100,
     ) / 100;
     const totalExpenses = Math.round((labourExpenses + materialExpenses + otherExpenses) * 100) / 100;
-    const totalPayables = Math.round(
-      payableExpenses.reduce((s, e) => s + toNumber(e.amount), 0) * 100,
-    ) / 100;
-    const payablesByParty = buildPayablesByParty(payableExpenses);
-    const payablesByType = buildPayablesByType(payableExpenses);
+    const payableNet = netPayableSummaries(payableExpenses, paidToParties);
+    const { totalPayables, payablesByParty, payablesByType } = payableNet;
+    const paidByParty = buildPayablesByParty(paidExpenses).map((p) => ({
+      ...p,
+      originalAmount: p.amount,
+      paidAmount: p.amount,
+    }));
+    const labourPayableDue = roundMoney(
+      payablesByParty
+        .filter((p) => p.kind === 'labour' || p.kind === 'salary')
+        .reduce((s, p) => s + p.amount, 0),
+    );
+    const otherPayablesDue = roundMoney(
+      payablesByParty
+        .filter((p) => p.kind !== 'labour' && p.kind !== 'salary')
+        .reduce((s, p) => s + p.amount, 0),
+    );
+    const labourHours = summarizeLabourHours(
+      labourWeekRows.filter((row) => labourWeeksOverlapping(start, end).overlaps(row.weekStart)),
+    );
     const netProfit = Math.round((totalPaymentsReceived - totalExpenses) * 100) / 100;
 
     return {
@@ -1533,8 +1925,13 @@ class FinanceReportService {
       otherExpenses,
       totalExpenses,
       totalPayables,
+      labourPayableDue,
+      otherPayablesDue,
       payablesByParty,
       payablesByType,
+      paidByParty,
+      labourByEmployee: labourHours.labourByEmployee,
+      labourHoursTotals: labourHours.labourHoursTotals,
       netProfit,
       isProfit: netProfit >= 0,
     };
@@ -1548,6 +1945,46 @@ class FinanceReportService {
   ) {
     const { start, end } = weekRange(from, to);
     const key = (metric || '').trim().toLowerCase();
+
+    if (key === 'labour_hours') {
+      const { lookback, overlaps } = labourWeeksOverlapping(start, end);
+      const rows = (await prisma.labourWeeklyHours.findMany({
+        where: {
+          weekStart: { gte: lookback, lte: end },
+          employee: { deletedAt: null },
+        },
+        select: {
+          id: true,
+          weekStart: true,
+          hours: true,
+          workedDays: true,
+          totalAmount: true,
+          notes: true,
+          employee: { select: { id: true, name: true, employeeCode: true } },
+        },
+        orderBy: [{ weekStart: 'desc' }, { createdAt: 'desc' }],
+      })).filter((row) => overlaps(row.weekStart));
+      const totals = summarizeLabourHours(rows).labourHoursTotals;
+      return {
+        metric: key,
+        title: 'Labour hours',
+        from: start.toISOString(),
+        to: end.toISOString(),
+        columns: ['Week start', 'Labour', 'Days', 'Hours', 'Allocated salary'],
+        rows: rows.map((row) => ({
+          id: row.id,
+          date: row.weekStart,
+          employee: row.employee?.name || null,
+          employeeCode: row.employee?.employeeCode || null,
+          description: row.notes,
+          hours: roundMoney(toNumber(row.hours)),
+          workedDays: row.workedDays || 0,
+          amount: roundMoney(toNumber(row.totalAmount)),
+        })),
+        total: totals.allocatedSalary,
+        labourHoursTotals: totals,
+      };
+    }
 
     if (key === 'jobs_received') {
       const jobs = await prisma.job.findMany({
@@ -1584,8 +2021,8 @@ class FinanceReportService {
             select: { amount: true },
           },
         },
-        orderBy: { receivedDate: 'desc' },
-        take: 500,
+        orderBy: [{ receivedDate: 'desc' }, { createdAt: 'desc' }],
+        take: 10000,
       });
       return {
         metric: key,
@@ -1646,8 +2083,8 @@ class FinanceReportService {
             select: { amount: true },
           },
         },
-        orderBy: { outDate: 'desc' },
-        take: 500,
+        orderBy: [{ outDate: 'desc' }, { createdAt: 'desc' }],
+        take: 10000,
       });
 
       const rows = jobs.map((j) => {
@@ -1715,7 +2152,7 @@ class FinanceReportService {
           },
         },
         orderBy: { createdAt: 'desc' },
-        take: 500,
+        take: 10000,
       });
       return {
         metric: key,
@@ -1757,7 +2194,7 @@ class FinanceReportService {
           },
         },
         orderBy: { createdAt: 'desc' },
-        take: 500,
+        take: 10000,
       });
       return {
         metric: key,
@@ -1803,8 +2240,8 @@ class FinanceReportService {
             },
           },
         },
-        orderBy: { paidAt: 'desc' },
-        take: 500,
+        orderBy: [{ paidAt: 'desc' }, { createdAt: 'desc' }],
+        take: 10000,
       });
 
       const rows = (key === 'other_payments'
@@ -1839,28 +2276,13 @@ class FinanceReportService {
       };
     }
 
-    if (
-      key === 'expenses'
-      || key === 'labour_expenses'
-      || key === 'material_expenses'
-      || key === 'other_expenses'
-      || key === 'payables'
-    ) {
-      const category = key === 'labour_expenses'
-        ? 'LABOUR'
-        : key === 'material_expenses'
-          ? 'MATERIAL'
-          : undefined;
-      const isPayableOnly = key === 'payables';
-      const isOtherOperating = key === 'other_expenses';
-      const partyFilter = isPayableOnly ? (party || '').trim() || undefined : undefined;
-      const allExpenses = await prisma.expense.findMany({
+    if (key === 'paid_expenses') {
+      const partyFilter = (party || '').trim() || undefined;
+      const expenses = await prisma.expense.findMany({
         where: {
           ...softDeleteFilter(),
           expenseDate: { gte: start, lte: end },
-          ...(category ? { category: category as ExpenseCategory } : {}),
-          ...(isOtherOperating ? { category: { notIn: ['LABOUR', 'MATERIAL'] } } : {}),
-          ...(isPayableOnly ? { isPayable: true } : key === 'expenses' || category || isOtherOperating ? { isPayable: false } : {}),
+          isPayable: false,
         },
         select: {
           id: true,
@@ -1879,47 +2301,28 @@ class FinanceReportService {
           supplier: { select: { id: true, name: true, supplierCode: true } },
           employee: { select: { id: true, name: true, employeeCode: true, jobTitle: true } },
         },
-        orderBy: { expenseDate: 'desc' },
-        take: 500,
+        orderBy: [{ expenseDate: 'desc' }, { createdAt: 'desc' }],
+        take: 10000,
       });
-
-      const expenses = partyFilter
-        ? allExpenses.filter((e) => getPayablePartyMeta(e).id === partyFilter)
-        : allExpenses;
+      const paidByParty = buildPayablesByParty(expenses);
+      const rows = partyFilter
+        ? expenses.filter((e) => getPayablePartyMeta(e).id === partyFilter)
+        : expenses;
       const partyMeta = partyFilter
-        ? (expenses[0]
-          ? getPayablePartyMeta(expenses[0])
-          : allExpenses.map((e) => getPayablePartyMeta(e)).find((p) => p.id === partyFilter) || null)
+        ? paidByParty.find((p) => p.id === partyFilter)
+          || (rows[0] ? getPayablePartyMeta(rows[0]) : null)
         : null;
-
-      const title = key === 'labour_expenses'
-        ? 'Labour expenses'
-        : key === 'material_expenses'
-          ? 'Material expenses'
-          : key === 'other_expenses'
-            ? 'Other expenses'
-            : key === 'payables'
-              ? (partyMeta
-                ? `Payables · ${partyMeta.name}${partyMeta.code ? ` (${partyMeta.code})` : ''}`
-                : 'Payables (credit)')
-              : 'Total expenses';
-
-      const byParty = isPayableOnly && !partyFilter ? buildPayablesByParty(allExpenses) : undefined;
-      const byType = isPayableOnly && !partyFilter ? buildPayablesByType(allExpenses) : undefined;
-
       return {
         metric: key,
-        title,
+        title: partyMeta
+          ? `Paid expenses · ${partyMeta.name}${partyMeta.code ? ` (${partyMeta.code})` : ''}`
+          : 'Paid expenses by party',
         from: start.toISOString(),
         to: end.toISOString(),
         partyId: partyFilter || null,
         party: partyMeta,
-        columns: isPayableOnly
-          ? ['Date', 'Category', 'Payable to', 'Description', 'Amount']
-          : key === 'labour_expenses'
-            ? ['Date', 'Category', 'Paid to', 'Description', 'Amount']
-            : ['Date', 'Category', 'Description', 'Method', 'Amount'],
-        rows: expenses.map((e) => {
+        columns: ['Date', 'Category', 'Paid to', 'Description', 'Method', 'Amount'],
+        rows: rows.map((e) => {
           const meta = getPayablePartyMeta(e);
           return {
             id: e.id,
@@ -1941,9 +2344,163 @@ class FinanceReportService {
             amount: toNumber(e.amount),
           };
         }),
-        total: Math.round(expenses.reduce((s, e) => s + toNumber(e.amount), 0) * 100) / 100,
-        ...(byParty ? { byParty } : {}),
-        ...(byType ? { byType } : {}),
+        total: roundMoney(rows.reduce((s, e) => s + toNumber(e.amount), 0)),
+        ...(!partyFilter ? { byParty: paidByParty } : {}),
+      };
+    }
+
+    if (
+      key === 'expenses'
+      || key === 'labour_expenses'
+      || key === 'material_expenses'
+      || key === 'other_expenses'
+      || key === 'payables'
+    ) {
+      const category = key === 'labour_expenses'
+        ? 'LABOUR'
+        : key === 'material_expenses'
+          ? 'MATERIAL'
+          : undefined;
+      const isPayableOnly = key === 'payables';
+      const isOtherOperating = key === 'other_expenses';
+      const partyFilter = isPayableOnly ? (party || '').trim() || undefined : undefined;
+      const expenseSelect = {
+        id: true,
+        category: true,
+        materialType: true,
+        outsourceType: true,
+        otherType: true,
+        description: true,
+        amount: true,
+        expenseDate: true,
+        createdAt: true,
+        paymentMethod: true,
+        reference: true,
+        isPayable: true,
+        supplierId: true,
+        employeeId: true,
+        supplier: { select: { id: true, name: true, supplierCode: true } },
+        employee: { select: { id: true, name: true, employeeCode: true, jobTitle: true } },
+      } as const;
+
+      if (isPayableOnly) {
+        const [payableExpenses, paidExpenses] = await Promise.all([
+          prisma.expense.findMany({
+            where: payableWhereUpTo(end),
+            select: expenseSelect,
+            orderBy: { expenseDate: 'asc' },
+          }),
+          prisma.expense.findMany({
+            where: paidWhereUpTo(end),
+            select: expenseSelect,
+          }),
+        ]);
+        const payableNet = netPayableSummaries(payableExpenses, paidExpenses);
+        const expenses = (partyFilter
+          ? payableNet.netted.filter((e) => getPayablePartyMeta(e).id === partyFilter)
+          : payableNet.netted)
+          .slice()
+          .sort((a, b) => payableTime(b.expenseDate) - payableTime(a.expenseDate)
+            || payableTime(b.createdAt) - payableTime(a.createdAt));
+        const partyMeta = partyFilter
+          ? payableNet.payablesByParty.find((p) => p.id === partyFilter)
+            || (expenses[0] ? getPayablePartyMeta(expenses[0]) : null)
+          : null;
+        return {
+          metric: key,
+          title: partyMeta
+            ? `Payables · ${partyMeta.name}${partyMeta.code ? ` (${partyMeta.code})` : ''}`
+            : 'Payables (credit)',
+          from: start.toISOString(),
+          to: end.toISOString(),
+          partyId: partyFilter || null,
+          party: partyMeta,
+          columns: ['Date', 'Category', 'Payable to', 'Description', 'Payable', 'Allocated', 'Due'],
+          rows: expenses.map((e) => {
+            const meta = getPayablePartyMeta(e);
+            return {
+              id: e.id,
+              date: e.expenseDate,
+              category: e.category,
+              materialType: e.materialType,
+              outsourceType: e.outsourceType,
+              otherType: e.otherType,
+              description: e.description,
+              paymentMethod: e.paymentMethod,
+              reference: e.reference,
+              isPayable: e.isPayable,
+              supplier: e.supplier?.name || null,
+              supplierCode: e.supplier?.supplierCode || null,
+              employee: e.employee?.name || null,
+              employeeCode: e.employee?.employeeCode || null,
+              partyId: meta.id,
+              detail: e.employee?.name || e.supplier?.name || null,
+              amount: e.originalAmount,
+              amountPaid: e.paidAmount,
+              balance: e.remainingAmount,
+            };
+          }),
+          total: partyFilter
+            ? roundMoney(expenses.reduce((s, e) => s + e.remainingAmount, 0))
+            : payableNet.totalPayables,
+          ...(!partyFilter ? { byParty: payableNet.payablesByParty, byType: payableNet.payablesByType } : {}),
+        };
+      }
+
+      const allExpenses = await prisma.expense.findMany({
+        where: {
+          ...softDeleteFilter(),
+          expenseDate: { gte: start, lte: end },
+          ...(category ? { category: category as ExpenseCategory } : {}),
+          ...(isOtherOperating ? { category: { notIn: ['LABOUR', 'MATERIAL'] as ExpenseCategory[] } } : {}),
+          ...(key === 'expenses' || category || isOtherOperating ? { isPayable: false } : {}),
+        },
+        select: expenseSelect,
+        orderBy: [{ expenseDate: 'desc' }, { createdAt: 'desc' }],
+        take: 10000,
+      });
+
+      const title = key === 'labour_expenses'
+        ? 'Labour expenses'
+        : key === 'material_expenses'
+          ? 'Material expenses'
+          : key === 'other_expenses'
+            ? 'Other expenses'
+            : 'Total expenses';
+
+      return {
+        metric: key,
+        title,
+        from: start.toISOString(),
+        to: end.toISOString(),
+        partyId: null,
+        party: null,
+        columns: key === 'labour_expenses'
+          ? ['Date', 'Category', 'Paid to', 'Description', 'Amount']
+          : ['Date', 'Category', 'Description', 'Method', 'Amount'],
+        rows: allExpenses.map((e) => {
+          const meta = getPayablePartyMeta(e);
+          return {
+            id: e.id,
+            date: e.expenseDate,
+            category: e.category,
+            materialType: e.materialType,
+            outsourceType: e.outsourceType,
+            otherType: e.otherType,
+            description: e.description,
+            paymentMethod: e.paymentMethod,
+            reference: e.reference,
+            isPayable: e.isPayable,
+            supplier: e.supplier?.name || null,
+            supplierCode: e.supplier?.supplierCode || null,
+            employee: e.employee?.name || null,
+            employeeCode: e.employee?.employeeCode || null,
+            partyId: meta.id,
+            detail: e.employee?.name || e.supplier?.name || null,
+            amount: toNumber(e.amount),
+          };
+        }),
+        total: Math.round(allExpenses.reduce((s, e) => s + toNumber(e.amount), 0) * 100) / 100,
       };
     }
 
@@ -1959,6 +2516,7 @@ class FinanceReportService {
             amount: true,
             paymentMethod: true,
             paidAt: true,
+            createdAt: true,
             job: {
               select: {
                 jobNumber: true,
@@ -1966,8 +2524,8 @@ class FinanceReportService {
               },
             },
           },
-          orderBy: { paidAt: 'desc' },
-          take: 500,
+          orderBy: [{ paidAt: 'desc' }, { createdAt: 'desc' }],
+          take: 10000,
         }),
         prisma.expense.findMany({
           where: {
@@ -1981,9 +2539,10 @@ class FinanceReportService {
             description: true,
             amount: true,
             expenseDate: true,
+            createdAt: true,
           },
-          orderBy: { expenseDate: 'desc' },
-          take: 500,
+          orderBy: [{ expenseDate: 'desc' }, { createdAt: 'desc' }],
+          take: 10000,
         }),
       ]);
 
@@ -2000,6 +2559,7 @@ class FinanceReportService {
           ...collections.map((c) => ({
             id: `p-${c.id}`,
             date: c.paidAt,
+            createdAt: c.createdAt,
             entryType: 'Payment',
             detail: [c.job?.jobNumber, c.job?.customer?.name, c.paymentMethod].filter(Boolean).join(' · '),
             amount: toNumber(c.amount),
@@ -2007,11 +2567,13 @@ class FinanceReportService {
           ...expenses.map((e) => ({
             id: `e-${e.id}`,
             date: e.expenseDate,
+            createdAt: e.createdAt,
             entryType: 'Expense',
             detail: `${e.category} · ${e.description}`,
             amount: -toNumber(e.amount),
           })),
-        ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+        ].sort((a, b) => payableTime(b.date) - payableTime(a.date)
+          || payableTime(b.createdAt) - payableTime(a.createdAt)),
         total: Math.round((paymentTotal - expenseTotal) * 100) / 100,
         paymentTotal,
         expenseTotal,
@@ -2025,7 +2587,7 @@ class FinanceReportService {
   async periodReport(from?: string, to?: string) {
     const { start, end } = weekRange(from, to);
 
-    const [summary, jobsReceived, jobsOut, collections, expenses] = await Promise.all([
+    const [summary, jobsReceived, jobsOut, collections, expenses, payableExpenses, paidToParties] = await Promise.all([
       this.weeklySummary(from, to),
       prisma.job.findMany({
         where: {
@@ -2061,8 +2623,8 @@ class FinanceReportService {
             select: { amount: true },
           },
         },
-        orderBy: { receivedDate: 'asc' },
-        take: 1000,
+        orderBy: [{ receivedDate: 'desc' }, { createdAt: 'desc' }],
+        take: 10000,
       }),
       prisma.job.findMany({
         where: {
@@ -2100,8 +2662,8 @@ class FinanceReportService {
             select: { amount: true },
           },
         },
-        orderBy: { outDate: 'asc' },
-        take: 1000,
+        orderBy: [{ outDate: 'desc' }, { createdAt: 'desc' }],
+        take: 10000,
       }),
       prisma.jobCollection.findMany({
         where: {
@@ -2136,13 +2698,14 @@ class FinanceReportService {
             },
           },
         },
-        orderBy: { paidAt: 'asc' },
-        take: 1000,
+        orderBy: [{ paidAt: 'desc' }, { createdAt: 'desc' }],
+        take: 10000,
       }),
       prisma.expense.findMany({
         where: {
           ...softDeleteFilter(),
           expenseDate: { gte: start, lte: end },
+          isPayable: false,
         },
         select: {
           id: true,
@@ -2154,18 +2717,42 @@ class FinanceReportService {
           amount: true,
           expenseDate: true,
           paymentMethod: true,
+          supplier: { select: { id: true, name: true, supplierCode: true } },
+          employee: { select: { id: true, name: true, employeeCode: true, jobTitle: true } },
+        },
+        orderBy: [{ expenseDate: 'desc' }, { createdAt: 'desc' }],
+        take: 10000,
+      }),
+      prisma.expense.findMany({
+        where: payableWhereUpTo(end),
+        select: {
+          id: true,
+          category: true,
+          materialType: true,
+          outsourceType: true,
+          otherType: true,
+          description: true,
+          amount: true,
+          expenseDate: true,
+          createdAt: true,
+          paymentMethod: true,
           reference: true,
           isPayable: true,
+          supplierId: true,
+          employeeId: true,
           supplier: { select: { id: true, name: true, supplierCode: true } },
           employee: { select: { id: true, name: true, employeeCode: true, jobTitle: true } },
         },
         orderBy: { expenseDate: 'asc' },
-        take: 1000,
+      }),
+      prisma.expense.findMany({
+        where: paidWhereUpTo(end),
+        select: payablePartySelect,
       }),
     ]);
 
-    const paidExpenses = expenses.filter((e) => !e.isPayable);
-    const payableExpenses = expenses.filter((e) => e.isPayable);
+    const paidExpenses = expenses;
+    const payableNet = netPayableSummaries(payableExpenses, paidToParties);
 
     return {
       from: start.toISOString(),
@@ -2234,7 +2821,10 @@ class FinanceReportService {
         isPayable: false,
         amount: toNumber(e.amount),
       })),
-      payables: payableExpenses.map((e) => ({
+      payables: [...payableNet.netted]
+        .sort((a, b) => payableTime(b.expenseDate) - payableTime(a.expenseDate)
+          || payableTime(b.createdAt) - payableTime(a.createdAt))
+        .map((e) => ({
         id: e.id,
         date: e.expenseDate,
         category: e.category,
@@ -2249,8 +2839,206 @@ class FinanceReportService {
         employee: e.employee?.name || null,
         employeeCode: e.employee?.employeeCode || null,
         isPayable: true,
-        amount: toNumber(e.amount),
+        amount: e.originalAmount,
+        amountPaid: e.paidAmount,
+        balance: e.remainingAmount,
       })),
+    };
+  }
+
+  /**
+   * Period workshop report: vehicles in/out with repair prices, allocated labour,
+   * and other expenses split into paid and payable.
+   * Labour weekly-hour accruals are counted only in allocated labour cost.
+   */
+  async workshopReport(from?: string, to?: string) {
+    const { start, end } = weekRange(from, to);
+    const { lookback, overlaps } = labourWeeksOverlapping(start, end);
+
+    const [vehiclesIn, vehiclesOut, labourRows, collections] = await Promise.all([
+      prisma.job.findMany({
+        where: {
+          ...softDeleteFilter(),
+          receivedDate: { gte: start, lte: end },
+        },
+        select: workshopJobSelect(),
+        orderBy: [{ receivedDate: 'desc' }, { createdAt: 'desc' }],
+        take: 10000,
+      }),
+      prisma.job.findMany({
+        where: {
+          ...softDeleteFilter(),
+          outDate: { gte: start, lte: end },
+        },
+        select: workshopJobSelect(),
+        orderBy: [{ outDate: 'desc' }, { createdAt: 'desc' }],
+        take: 10000,
+      }),
+      prisma.labourWeeklyHours.findMany({
+        where: {
+          weekStart: { gte: lookback, lte: end },
+          employee: { deletedAt: null },
+        },
+        select: {
+          weekStart: true,
+          hours: true,
+          workedDays: true,
+          totalAmount: true,
+          expenseId: true,
+          employee: { select: { id: true, name: true, employeeCode: true } },
+        },
+      }),
+      prisma.jobCollection.findMany({
+        where: {
+          ...softDeleteFilter(),
+          paidAt: { gte: start, lte: end },
+        },
+        select: {
+          id: true,
+          amount: true,
+          paymentMethod: true,
+          collectionType: true,
+          paidAt: true,
+          reference: true,
+          notes: true,
+          job: {
+            select: {
+              jobNumber: true,
+              customer: { select: { name: true } },
+              vehicle: { select: { registrationNo: true } },
+            },
+          },
+          invoice: {
+            select: {
+              invoiceNumber: true,
+              notes: true,
+              customer: { select: { name: true } },
+              lineItems: {
+                select: { description: true },
+                orderBy: { sortOrder: 'asc' },
+                take: 1,
+              },
+            },
+          },
+        },
+        orderBy: [{ paidAt: 'desc' }, { createdAt: 'desc' }],
+        take: 10000,
+      }),
+    ]);
+
+    const labourInPeriod = labourRows.filter((row) => overlaps(row.weekStart));
+    const labourExpenseIds = labourInPeriod
+      .map((row) => row.expenseId)
+      .filter((id): id is string => !!id);
+
+    const otherExpenses = await prisma.expense.findMany({
+      where: {
+        ...softDeleteFilter(),
+        expenseDate: { gte: start, lte: end },
+        ...(labourExpenseIds.length ? { id: { notIn: labourExpenseIds } } : {}),
+      },
+      select: {
+        id: true,
+        category: true,
+        materialType: true,
+        outsourceType: true,
+        otherType: true,
+        description: true,
+        amount: true,
+        expenseDate: true,
+        isPayable: true,
+        paymentMethod: true,
+        reference: true,
+        supplier: { select: { name: true, supplierCode: true } },
+        employee: { select: { name: true, employeeCode: true } },
+      },
+      orderBy: [{ expenseDate: 'desc' }, { createdAt: 'desc' }],
+      take: 10000,
+    });
+
+    const labour = summarizeLabourHours(labourInPeriod);
+    const completedRows = await completedOrClosedVehicles(start, end);
+    const inRows = vehiclesIn.map((job) => mapWorkshopVehicle(job, 'receivedDate'));
+    const outRows = vehiclesOut.map((job) => mapWorkshopVehicle(job, 'outDate'));
+    const mapExpense = (e: (typeof otherExpenses)[number]) => ({
+      id: e.id,
+      date: e.expenseDate,
+      category: e.category,
+      materialType: e.materialType,
+      outsourceType: e.outsourceType,
+      otherType: e.otherType,
+      description: e.description,
+      paymentMethod: e.paymentMethod,
+      reference: e.reference,
+      supplier: e.supplier?.name || null,
+      supplierCode: e.supplier?.supplierCode || null,
+      employee: e.employee?.name || null,
+      employeeCode: e.employee?.employeeCode || null,
+      isPayable: e.isPayable,
+      amount: toNumber(e.amount),
+    });
+    const expensesPaid = otherExpenses.filter((e) => !e.isPayable).map(mapExpense);
+    const expensesPayable = otherExpenses.filter((e) => e.isPayable).map(mapExpense);
+    const vehiclesInRepairTotal = roundMoney(inRows.reduce((s, row) => s + row.repairPrice, 0));
+    const vehiclesOutRepairTotal = roundMoney(outRows.reduce((s, row) => s + row.repairPrice, 0));
+    const vehiclesCompletedRepairTotal = roundMoney(completedRows.reduce((s, row) => s + row.repairPrice, 0));
+    const vehiclesClosed = completedRows.filter((row) => row.eventStatus === 'CLOSED').length;
+    const otherExpensesPaidTotal = roundMoney(expensesPaid.reduce((s, row) => s + row.amount, 0));
+    const otherExpensesPayableTotal = roundMoney(expensesPayable.reduce((s, row) => s + row.amount, 0));
+    const allocatedLabourCost = labour.labourHoursTotals.allocatedSalary;
+    const collectionRows = collections.map((c) => ({
+      id: c.id,
+      date: c.paidAt,
+      jobNumber: c.job?.jobNumber || c.invoice?.invoiceNumber || '—',
+      customer: c.job?.customer?.name || c.invoice?.customer?.name || '—',
+      registrationNo: c.job?.vehicle?.registrationNo || '—',
+      description:
+        c.invoice?.lineItems?.[0]?.description
+        || c.invoice?.notes
+        || c.notes
+        || null,
+      reference: c.reference || null,
+      collectionType: c.collectionType,
+      paymentMethod: c.paymentMethod,
+      amount: toNumber(c.amount),
+    }));
+    const cashCollected = roundMoney(
+      collectionRows.filter((c) => isCashMethod(c.paymentMethod || '')).reduce((s, c) => s + c.amount, 0),
+    );
+    const otherCollected = roundMoney(
+      collectionRows.filter((c) => !isCashMethod(c.paymentMethod || '')).reduce((s, c) => s + c.amount, 0),
+    );
+
+    return {
+      from: start.toISOString(),
+      to: end.toISOString(),
+      summary: {
+        vehiclesIn: inRows.length,
+        vehiclesInRepairTotal,
+        vehiclesOut: outRows.length,
+        vehiclesOutRepairTotal,
+        vehiclesCompleted: completedRows.length,
+        vehiclesCompletedOnly: completedRows.length - vehiclesClosed,
+        vehiclesClosed,
+        vehiclesCompletedRepairTotal,
+        labourPeople: labour.labourByEmployee.length,
+        labourDays: labour.labourHoursTotals.workedDays,
+        labourHours: labour.labourHoursTotals.hours,
+        allocatedLabourCost,
+        otherExpensesPaid: otherExpensesPaidTotal,
+        otherExpensesPayable: otherExpensesPayableTotal,
+        totalExpenses: roundMoney(allocatedLabourCost + otherExpensesPaidTotal + otherExpensesPayableTotal),
+        collectionsTotal: roundMoney(cashCollected + otherCollected),
+        cashCollected,
+        otherCollected,
+      },
+      labour: labour.labourByEmployee,
+      vehiclesIn: inRows,
+      vehiclesOut: outRows,
+      vehiclesCompleted: completedRows,
+      expensesPaid,
+      expensesPayable,
+      collections: collectionRows,
     };
   }
 }

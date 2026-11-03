@@ -3,6 +3,7 @@ import { Download, FileDown } from 'lucide-react';
 import { attendanceApi, reportsApi } from '../lib/api';
 import { JOB_CATEGORIES, formatCurrency, formatDate, formatJobCategory, formatStatus } from '../lib/types';
 import { downloadDealerWiseReportPdf, downloadJobsReportPdf } from '../lib/reportPdf';
+import CustomPeriodReports from '../components/CustomPeriodReports';
 import { useAuth } from '../context/AuthContext';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
@@ -250,7 +251,7 @@ export default function ReportsPage() {
       <div className="flex flex-col lg:flex-row justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">Reports</h1>
-          <p className="text-gray-500">Invoice sales, revenue & productivity analytics</p>
+          <p className="text-gray-500">Custom period reports, invoice sales, revenue & productivity</p>
         </div>
         <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
           <div className="min-w-[200px]">
@@ -281,6 +282,8 @@ export default function ReportsPage() {
           Showing reports for <strong>{categoryLabel}</strong> jobs only — including jobs without invoices.
         </div>
       )}
+
+      <CustomPeriodReports />
 
       <div className="card space-y-4">
         <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3">

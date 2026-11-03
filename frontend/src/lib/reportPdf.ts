@@ -197,6 +197,8 @@ export interface FinancePeriodReportPdf {
       name: string;
       code?: string | null;
       amount: number;
+      originalAmount?: number;
+      paidAmount?: number;
       count: number;
     }[];
     payablesByType?: {
@@ -205,6 +207,20 @@ export interface FinancePeriodReportPdf {
       amount: number;
       count: number;
     }[];
+    labourByEmployee?: {
+      employeeId: string;
+      name: string;
+      code?: string | null;
+      workedDays: number;
+      hours: number;
+      allocatedSalary: number;
+      weekCount: number;
+    }[];
+    labourHoursTotals?: {
+      workedDays: number;
+      hours: number;
+      allocatedSalary: number;
+    };
     labourExpenses: number;
     materialExpenses: number;
     otherExpenses: number;
@@ -259,6 +275,8 @@ export interface FinancePeriodReportPdf {
     reference?: string | null;
     paymentMethod?: string | null;
     amount: number;
+    amountPaid?: number;
+    balance?: number;
   }[];
 }
 
@@ -311,7 +329,7 @@ export function downloadFinancePeriodReportPdf(report: FinancePeriodReportPdf) {
       ['  Labour', formatCurrency(s.labourExpenses)],
       ['  Materials', formatCurrency(s.materialExpenses)],
       ['  Other', formatCurrency(s.otherExpenses)],
-      ['Total payables', formatCurrency(s.totalPayables || 0)],
+      ['Total due', formatCurrency(s.totalPayables || 0)],
       [
         s.isProfit ? 'Net profit' : 'Net loss',
         formatCurrency(s.netProfit),
@@ -336,7 +354,7 @@ export function downloadFinancePeriodReportPdf(report: FinancePeriodReportPdf) {
       doc.text('Payables by type', 14, y);
       autoTable(doc, {
         startY: y + 4,
-        head: [['Type', 'Items', 'Total']],
+        head: [['Type', 'Items', 'Due']],
         body: byType.map((row) => [row.label, String(row.count), formatCurrency(row.amount)]),
         styles: { fontSize: 8, cellPadding: 1.5 },
         headStyles: { fillColor: [234, 88, 12], textColor: 255 },
@@ -354,7 +372,7 @@ export function downloadFinancePeriodReportPdf(report: FinancePeriodReportPdf) {
       doc.text(`Payables by party (${byParty.length})`, 14, y);
       autoTable(doc, {
         startY: y + 4,
-        head: [['Payable to', 'Type', 'Items', 'Total']],
+        head: [['Payable to', 'Type', 'Items', 'Payable', 'Paid', 'Due']],
         body: byParty.map((row) => [
           row.code ? `${row.name} (${row.code})` : row.name,
           row.kind === 'salary'
@@ -369,6 +387,8 @@ export function downloadFinancePeriodReportPdf(report: FinancePeriodReportPdf) {
                     ? 'Other'
                     : 'Unassigned',
           String(row.count),
+          formatCurrency(row.originalAmount ?? row.amount),
+          formatCurrency(row.paidAmount ?? 0),
           formatCurrency(row.amount),
         ]),
         styles: { fontSize: 8, cellPadding: 1.5 },
@@ -376,6 +396,8 @@ export function downloadFinancePeriodReportPdf(report: FinancePeriodReportPdf) {
         columnStyles: {
           2: { halign: 'right' },
           3: { halign: 'right' },
+          4: { halign: 'right' },
+          5: { halign: 'right' },
         },
         didDrawPage: () => pdfFooter(doc, 'Finance report'),
       });
@@ -383,6 +405,46 @@ export function downloadFinancePeriodReportPdf(report: FinancePeriodReportPdf) {
       doc.setFontSize(11);
       doc.setTextColor(0);
     }
+  }
+
+  const labourRows = s.labourByEmployee || [];
+  const labourTotals = s.labourHoursTotals;
+  if (labourRows.length) {
+    doc.text(`Labour hours (${labourRows.length})`, 14, y);
+    autoTable(doc, {
+      startY: y + 4,
+      head: [['Labour', 'Weeks', 'Working days', 'Hours', 'Allocated salary']],
+      body: [
+        ...labourRows.map((row) => [
+          row.code ? `${row.name} (${row.code})` : row.name,
+          String(row.weekCount),
+          String(row.workedDays),
+          row.hours.toLocaleString('en-NZ', { minimumFractionDigits: 0, maximumFractionDigits: 2 }),
+          formatCurrency(row.allocatedSalary),
+        ]),
+        labourTotals
+          ? [
+              'Total',
+              '',
+              String(labourTotals.workedDays),
+              labourTotals.hours.toLocaleString('en-NZ', { minimumFractionDigits: 0, maximumFractionDigits: 2 }),
+              formatCurrency(labourTotals.allocatedSalary),
+            ]
+          : [],
+      ].filter((row) => row.length),
+      styles: { fontSize: 8, cellPadding: 1.5 },
+      headStyles: { fillColor: [67, 56, 202], textColor: 255 },
+      columnStyles: {
+        1: { halign: 'right' },
+        2: { halign: 'right' },
+        3: { halign: 'right' },
+        4: { halign: 'right' },
+      },
+      didDrawPage: () => pdfFooter(doc, 'Finance report'),
+    });
+    y = nextTableStartY(doc, 14);
+    doc.setFontSize(11);
+    doc.setTextColor(0);
   }
 
   doc.text(`Jobs received (${report.jobsReceived.length})`, 14, y);
@@ -479,10 +541,10 @@ export function downloadFinancePeriodReportPdf(report: FinancePeriodReportPdf) {
   const payables = report.payables || [];
   y = nextTableStartY(doc, 14);
   doc.setFontSize(11);
-  doc.text(`Payables (${payables.length}) · ${formatCurrency(s.totalPayables || 0)}`, 14, y);
+  doc.text(`Payables (${payables.length}) · due ${formatCurrency(s.totalPayables || 0)}`, 14, y);
   autoTable(doc, {
     startY: y + 4,
-    head: [['Date', 'Category', 'Payable to', 'Description', 'Amount']],
+    head: [['Date', 'Category', 'Payable to', 'Description', 'Payable', 'Allocated', 'Due']],
     body: payables.length
       ? payables.map((r) => [
           r.date ? formatDate(r.date) : '—',
@@ -492,11 +554,13 @@ export function downloadFinancePeriodReportPdf(report: FinancePeriodReportPdf) {
             : (r.supplier || '—'),
           r.description || '—',
           formatCurrency(r.amount),
+          formatCurrency(r.amountPaid || 0),
+          formatCurrency(r.balance ?? r.amount),
         ])
-      : [['—', 'No payables', '—', '—', '—']],
+      : [['—', 'No payables', '—', '—', '—', '—', '—']],
     styles: { fontSize: 8, cellPadding: 1.5 },
     headStyles: { fillColor: [234, 88, 12], textColor: 255 },
-    columnStyles: { 4: { halign: 'right' } },
+    columnStyles: { 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' } },
     didDrawPage: () => pdfFooter(doc, 'Finance report'),
   });
 
@@ -512,7 +576,7 @@ export function downloadFinancePeriodReportPdf(report: FinancePeriodReportPdf) {
       ['Total jobs out', String(s.jobsOut)],
       ['Total collection', formatCurrency(s.totalPaymentsReceived)],
       ['Total expenses', formatCurrency(s.totalExpenses)],
-      ['Total payables', formatCurrency(s.totalPayables || 0)],
+      ['Total due', formatCurrency(s.totalPayables || 0)],
       [
         s.isProfit ? 'Profit' : 'Loss',
         formatCurrency(s.netProfit),
@@ -536,4 +600,323 @@ export function downloadFinancePeriodReportPdf(report: FinancePeriodReportPdf) {
   const fromKey = (report.from || 'all').slice(0, 10);
   const toKey = (report.to || 'all').slice(0, 10);
   savePdf(doc, `finance-report-${fromKey}-to-${toKey}.pdf`);
+}
+
+export interface WorkshopReportPdf {
+  from?: string;
+  to?: string;
+  summary: {
+    vehiclesIn: number;
+    vehiclesInRepairTotal: number;
+    vehiclesOut: number;
+    vehiclesOutRepairTotal: number;
+    labourPeople: number;
+    labourDays: number;
+    labourHours: number;
+    allocatedLabourCost: number;
+    otherExpensesPaid: number;
+    otherExpensesPayable: number;
+    totalExpenses: number;
+  };
+  labour: {
+    employeeId: string;
+    name: string;
+    code?: string | null;
+    workedDays: number;
+    hours: number;
+    allocatedSalary: number;
+    weekCount: number;
+  }[];
+  vehiclesIn: {
+    date?: string | null;
+    jobNumber?: string;
+    customer?: string;
+    registrationNo?: string;
+    vehicle?: string;
+    status?: string;
+    repairPrice?: number;
+  }[];
+  vehiclesOut: {
+    date?: string | null;
+    jobNumber?: string;
+    customer?: string;
+    registrationNo?: string;
+    vehicle?: string;
+    status?: string;
+    repairPrice?: number;
+  }[];
+  expensesPaid: {
+    date?: string | null;
+    category?: string;
+    description?: string;
+    supplier?: string | null;
+    employee?: string | null;
+    paymentMethod?: string | null;
+    amount: number;
+  }[];
+  expensesPayable: {
+    date?: string | null;
+    category?: string;
+    description?: string;
+    supplier?: string | null;
+    employee?: string | null;
+    amount: number;
+  }[];
+  expenseCategories?: {
+    label: string;
+    paid: number;
+    payable: number;
+  }[];
+  summaryLines?: { label: string; value: string }[];
+  allocatedExpenseTotal?: number;
+  paidExpenseTotal?: number;
+}
+
+function moneyOrDash(amount?: number) {
+  return (amount || 0) > 0 ? formatCurrency(amount || 0) : '—';
+}
+
+function partyName(row: { employee?: string | null; supplier?: string | null }) {
+  return row.employee || row.supplier || '—';
+}
+
+/** Workshop period report: vehicles, repair prices, labour allocation, other expenses */
+export function downloadWorkshopReportPdf(report: WorkshopReportPdf) {
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  const s = report.summary;
+
+  doc.setFontSize(16);
+  doc.text('Finance report', 14, 16);
+  doc.setFontSize(10);
+  doc.setTextColor(80);
+  doc.text(periodLabel(report.from, report.to), 14, 22);
+  doc.setTextColor(0);
+
+  doc.setFontSize(11);
+  doc.text('Summary', 14, 32);
+  const hoursLabel = s.labourHours.toLocaleString('en-NZ', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  autoTable(doc, {
+    startY: 36,
+    head: [['Metric', 'Value']],
+    body: report.summaryLines?.length
+      ? report.summaryLines.map((row) => [row.label, row.value])
+      : [
+          ['Total vehicles in (qty)', String(s.vehiclesIn)],
+          ['Total job value (in)', formatCurrency(s.vehiclesInRepairTotal)],
+          ['Total vehicles out (qty)', String(s.vehiclesOut)],
+          ['Total job value (out)', formatCurrency(s.vehiclesOutRepairTotal)],
+          ['Total allocated labour hours', hoursLabel],
+          ['Labour cost', formatCurrency(s.allocatedLabourCost)],
+          ['No. of labours worked', String(s.labourPeople)],
+        ],
+    styles: { fontSize: 9, cellPadding: 2 },
+    headStyles: { fillColor: [30, 64, 175], textColor: 255 },
+    columnStyles: {
+      0: { cellWidth: 70 },
+      1: { cellWidth: 50, halign: 'right' },
+    },
+    didDrawPage: () => pdfFooter(doc, 'Finance report'),
+  });
+
+  let y = nextTableStartY(doc, 14);
+  doc.setFontSize(11);
+  doc.setTextColor(0);
+  doc.text('Breakdown', 14, y);
+  y += 6;
+
+  doc.text(`Vehicles in (${report.vehiclesIn.length}) · ${formatCurrency(s.vehiclesInRepairTotal)}`, 14, y);
+  autoTable(doc, {
+    startY: y + 4,
+    head: [['Date', 'Job', 'Customer', 'Rego', 'Vehicle', 'Status', 'Job value']],
+    body: report.vehiclesIn.length
+      ? report.vehiclesIn.map((r) => [
+          r.date ? formatDate(r.date) : '—',
+          r.jobNumber || '—',
+          r.customer || '—',
+          r.registrationNo || '—',
+          r.vehicle || '—',
+          formatStatus(r.status || ''),
+          moneyOrDash(r.repairPrice),
+        ])
+      : [['—', 'No vehicles in', '—', '—', '—', '—', '—']],
+    styles: { fontSize: 8, cellPadding: 1.5 },
+    headStyles: { fillColor: [37, 99, 235], textColor: 255 },
+    columnStyles: { 6: { halign: 'right' } },
+    didDrawPage: () => pdfFooter(doc, 'Finance report'),
+  });
+
+  y = nextTableStartY(doc, 14);
+  doc.setFontSize(11);
+  doc.text(`Vehicles out (${report.vehiclesOut.length}) · ${formatCurrency(s.vehiclesOutRepairTotal)}`, 14, y);
+  autoTable(doc, {
+    startY: y + 4,
+    head: [['Out date', 'Job', 'Customer', 'Rego', 'Vehicle', 'Status', 'Job value']],
+    body: report.vehiclesOut.length
+      ? report.vehiclesOut.map((r) => [
+          r.date ? formatDate(r.date) : '—',
+          r.jobNumber || '—',
+          r.customer || '—',
+          r.registrationNo || '—',
+          r.vehicle || '—',
+          formatStatus(r.status || ''),
+          moneyOrDash(r.repairPrice),
+        ])
+      : [['—', 'No vehicles out', '—', '—', '—', '—', '—']],
+    styles: { fontSize: 8, cellPadding: 1.5 },
+    headStyles: { fillColor: [22, 163, 74], textColor: 255 },
+    columnStyles: { 6: { halign: 'right' } },
+    didDrawPage: () => pdfFooter(doc, 'Finance report'),
+  });
+
+  y = nextTableStartY(doc, 14);
+  doc.setFontSize(11);
+  doc.text(
+    `Labour (${report.labour.length}) · ${s.labourHours.toLocaleString('en-NZ', { maximumFractionDigits: 2 })}h · ${formatCurrency(s.allocatedLabourCost)}`,
+    14,
+    y,
+  );
+  autoTable(doc, {
+    startY: y + 4,
+    head: [['Labour', 'Weeks', 'Working days', 'Hours', 'Allocated cost']],
+    body: report.labour.length
+      ? [
+          ...report.labour.map((row) => [
+            row.code ? `${row.name} (${row.code})` : row.name,
+            String(row.weekCount),
+            String(row.workedDays),
+            row.hours.toLocaleString('en-NZ', { minimumFractionDigits: 0, maximumFractionDigits: 2 }),
+            formatCurrency(row.allocatedSalary),
+          ]),
+          ['Total', '', String(s.labourDays), s.labourHours.toLocaleString('en-NZ', { maximumFractionDigits: 2 }), formatCurrency(s.allocatedLabourCost)],
+        ]
+      : [['No labour hours in this period', '', '', '', '']],
+    styles: { fontSize: 8, cellPadding: 1.5 },
+    headStyles: { fillColor: [67, 56, 202], textColor: 255 },
+    columnStyles: {
+      1: { halign: 'right' },
+      2: { halign: 'right' },
+      3: { halign: 'right' },
+      4: { halign: 'right' },
+    },
+    didDrawPage: () => pdfFooter(doc, 'Finance report'),
+  });
+
+  y = nextTableStartY(doc, 14);
+  doc.setFontSize(11);
+  doc.text(`Allocated expenses except labour (${report.expensesPayable.length}) · ${formatCurrency(report.allocatedExpenseTotal ?? s.otherExpensesPayable)}`, 14, y);
+  autoTable(doc, {
+    startY: y + 4,
+    head: [['Date', 'Category', 'Payable to', 'Description', 'Amount']],
+    body: report.expensesPayable.length
+      ? report.expensesPayable.map((r) => [
+          r.date ? formatDate(r.date) : '—',
+          (r.category || '—').replace(/_/g, ' '),
+          partyName(r),
+          r.description || '—',
+          formatCurrency(r.amount),
+        ])
+      : [['—', 'No allocated expenses', '—', '—', '—']],
+    styles: { fontSize: 8, cellPadding: 1.5 },
+    headStyles: { fillColor: [234, 88, 12], textColor: 255 },
+    columnStyles: { 4: { halign: 'right' } },
+    didDrawPage: () => pdfFooter(doc, 'Finance report'),
+  });
+
+  y = nextTableStartY(doc, 14);
+  doc.setFontSize(11);
+  doc.text(`Paid expenses (${report.expensesPaid.length}) · ${formatCurrency(report.paidExpenseTotal ?? s.otherExpensesPaid)}`, 14, y);
+  autoTable(doc, {
+    startY: y + 4,
+    head: [['Date', 'Category', 'Paid to', 'Description', 'Method', 'Amount']],
+    body: report.expensesPaid.length
+      ? report.expensesPaid.map((r) => [
+          r.date ? formatDate(r.date) : '—',
+          (r.category || '—').replace(/_/g, ' '),
+          partyName(r),
+          r.description || '—',
+          (r.paymentMethod || '—').replace(/_/g, ' '),
+          formatCurrency(r.amount),
+        ])
+      : [['—', 'No paid expenses', '—', '—', '—', '—']],
+    styles: { fontSize: 8, cellPadding: 1.5 },
+    headStyles: { fillColor: [217, 119, 6], textColor: 255 },
+    columnStyles: { 5: { halign: 'right' } },
+    didDrawPage: () => pdfFooter(doc, 'Finance report'),
+  });
+
+  const fromKey = (report.from || 'all').slice(0, 10);
+  const toKey = (report.to || 'all').slice(0, 10);
+  savePdf(doc, `finance-period-report-${fromKey}-to-${toKey}.pdf`);
+}
+
+export interface CustomReportPdfSection {
+  heading: string;
+  head: string[];
+  body: (string | number)[][];
+  emptyCols?: number;
+  emptyLabel?: string;
+}
+
+/** Choosable Reports-page PDFs: summary first, then detail sections. */
+export function downloadCustomPeriodReportPdf(options: {
+  title: string;
+  filename: string;
+  from?: string;
+  to?: string;
+  summaryLines: { label: string; value: string }[];
+  sections: CustomReportPdfSection[];
+}) {
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+
+  doc.setFontSize(16);
+  doc.text(options.title, 14, 16);
+  doc.setFontSize(10);
+  doc.setTextColor(80);
+  doc.text(periodLabel(options.from, options.to), 14, 22);
+  doc.setTextColor(0);
+
+  doc.setFontSize(11);
+  doc.text('Summary', 14, 32);
+  autoTable(doc, {
+    startY: 36,
+    head: [['Metric', 'Value']],
+    body: options.summaryLines.map((row) => [row.label, row.value]),
+    styles: { fontSize: 9, cellPadding: 2 },
+    headStyles: { fillColor: [30, 64, 175], textColor: 255 },
+    columnStyles: {
+      0: { cellWidth: 80 },
+      1: { cellWidth: 50, halign: 'right' },
+    },
+    didDrawPage: () => pdfFooter(doc, options.title),
+  });
+
+  if (options.sections.length === 0) {
+    savePdf(doc, options.filename);
+    return;
+  }
+
+  let y = nextTableStartY(doc, 14);
+  doc.setFontSize(11);
+  doc.setTextColor(0);
+  doc.text('Detail', 14, y);
+
+  for (const section of options.sections) {
+    y = nextTableStartY(doc, 10);
+    doc.setFontSize(11);
+    doc.text(section.heading, 14, y);
+    const colCount = section.head.length;
+    autoTable(doc, {
+      startY: y + 4,
+      head: [section.head],
+      body: section.body.length
+        ? section.body
+        : [Array.from({ length: colCount }, (_, i) => (i === 1 ? (section.emptyLabel || 'No rows') : '—'))],
+      styles: { fontSize: 8, cellPadding: 1.5 },
+      headStyles: { fillColor: [37, 99, 235], textColor: 255 },
+      columnStyles: { [colCount - 1]: { halign: 'right' } },
+      didDrawPage: () => pdfFooter(doc, options.title),
+    });
+  }
+
+  savePdf(doc, options.filename);
 }

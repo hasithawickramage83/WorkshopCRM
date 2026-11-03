@@ -22,6 +22,35 @@ function num(value: string) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function splitHours(decimalHours: number) {
+  const totalMinutes = Math.round(Math.max(0, decimalHours) * 60);
+  return {
+    hours: Math.floor(totalMinutes / 60),
+    minutes: totalMinutes % 60,
+  };
+}
+
+function combineHours(hoursStr: string, minutesStr: string) {
+  const hours = Math.max(0, num(hoursStr));
+  const minutes = Math.max(0, Math.min(59, Math.round(num(minutesStr))));
+  return Math.round((hours + minutes / 60) * 100) / 100;
+}
+
+function parsedTime(hoursStr: string, minutesStr: string) {
+  return {
+    hours: Math.max(0, num(hoursStr)),
+    minutes: Math.max(0, Math.min(59, Math.round(num(minutesStr)))),
+  };
+}
+
+function formatDuration(decimalHours: number) {
+  if (decimalHours <= 0) return '—';
+  const { hours, minutes } = splitHours(decimalHours);
+  if (hours && minutes) return `${hours}h ${minutes}m`;
+  if (hours) return `${hours}h`;
+  return `${minutes}m`;
+}
+
 interface RowState {
   employeeId: string;
   entryId: string | null;
@@ -31,6 +60,7 @@ interface RowState {
   isActive: boolean;
   workedDays: string;
   hours: string;
+  minutes: string;
   hourlyRate: string;
   notes: string;
 }
@@ -39,6 +69,7 @@ function rowsFromWeek(data: LabourHoursWeek): RowState[] {
   const byEmployee = new Map(data.entries.map((entry) => [entry.employeeId, entry]));
   return data.employees.map((employee) => {
     const entry = byEmployee.get(employee.id);
+    const parts = entry ? splitHours(entry.hours) : { hours: 0, minutes: 0 };
     return {
       employeeId: employee.id,
       entryId: entry?.id || null,
@@ -47,7 +78,8 @@ function rowsFromWeek(data: LabourHoursWeek): RowState[] {
       jobTitle: employee.jobTitle || null,
       isActive: employee.isActive !== false,
       workedDays: entry?.workedDays ? String(entry.workedDays) : '',
-      hours: entry ? String(entry.hours) : '',
+      hours: entry ? String(parts.hours) : '',
+      minutes: entry && parts.minutes ? String(parts.minutes) : (entry ? '0' : ''),
       hourlyRate: entry
         ? String(entry.hourlyRate)
         : (employee.hourlyRate != null ? String(employee.hourlyRate) : ''),
@@ -87,20 +119,34 @@ export default function LabourHoursPage() {
     return () => clearTimeout(t);
   }, [toast]);
 
+  const rowTotals = useMemo(() => {
+    return rows.map((row) => {
+      const hours = combineHours(row.hours, row.minutes);
+      const rate = num(row.hourlyRate);
+      return {
+        ...row,
+        decimalHours: hours,
+        amount: Math.round(hours * rate * 100) / 100,
+      };
+    });
+  }, [rows]);
+
+  const workedRows = useMemo(
+    () => rowTotals.filter((row) => row.decimalHours > 0 || num(row.workedDays) > 0),
+    [rowTotals],
+  );
+
   const totals = useMemo(() => {
-    return rows.reduce(
+    return rowTotals.reduce(
       (acc, row) => {
-        const days = num(row.workedDays);
-        const hours = num(row.hours);
-        const rate = num(row.hourlyRate);
-        acc.days += days;
-        acc.hours += hours;
-        acc.amount += hours * rate;
+        acc.days += num(row.workedDays);
+        acc.hours += row.decimalHours;
+        acc.amount += row.amount;
         return acc;
       },
       { days: 0, hours: 0, amount: 0 },
     );
-  }, [rows]);
+  }, [rowTotals]);
 
   const updateRow = (employeeId: string, patch: Partial<RowState>) => {
     setRows((current) => current.map((row) => (
@@ -116,13 +162,17 @@ export default function LabourHoursPage() {
     try {
       const res = await labourHoursApi.saveWeek({
         weekStart,
-        rows: rows.map((row) => ({
-          employeeId: row.employeeId,
-          workedDays: row.workedDays.trim() === '' ? 0 : Math.round(num(row.workedDays)),
-          hours: num(row.hours),
-          hourlyRate: row.hourlyRate.trim() === '' ? null : num(row.hourlyRate),
-          notes: row.notes.trim() || null,
-        })),
+        rows: rows.map((row) => {
+          const time = parsedTime(row.hours, row.minutes);
+          return {
+            employeeId: row.employeeId,
+            workedDays: row.workedDays.trim() === '' ? 0 : Math.round(num(row.workedDays)),
+            hours: time.hours,
+            minutes: time.minutes,
+            hourlyRate: row.hourlyRate.trim() === '' ? null : num(row.hourlyRate),
+            notes: row.notes.trim() || null,
+          };
+        }),
       });
       const data = res.data.data as LabourHoursWeek;
       setWeekStart(data.weekStart);
@@ -138,13 +188,13 @@ export default function LabourHoursPage() {
 
   const handleClear = async (row: RowState) => {
     if (!row.entryId) {
-      updateRow(row.employeeId, { hours: '', workedDays: '', notes: '' });
+      updateRow(row.employeeId, { hours: '', minutes: '', workedDays: '', notes: '' });
       return;
     }
     if (!confirm(`Clear hours for ${row.name} this week?`)) return;
     try {
       await labourHoursApi.delete(row.entryId);
-      updateRow(row.employeeId, { entryId: null, hours: '', workedDays: '', notes: '' });
+      updateRow(row.employeeId, { entryId: null, hours: '', minutes: '', workedDays: '', notes: '' });
       setToast(`Cleared hours for ${row.name}`);
     } catch (err: unknown) {
       setError((err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message || 'Failed to clear hours');
@@ -156,7 +206,7 @@ export default function LabourHoursPage() {
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold">Labour hours</h1>
-          <p className="text-gray-500">Record weekly working days, hours, and hourly rates. Saved hours become a labour payable in Finance.</p>
+          <p className="text-gray-500">Record weekly working days, hours and minutes, and hourly rates. Saved hours become a labour payable in Finance.</p>
         </div>
         <button type="submit" form="labour-hours-form" className="btn-primary inline-flex items-center gap-2" disabled={saving || loading || rows.length === 0}>
           <Save className="w-4 h-4" /> {saving ? 'Saving...' : 'Save week'}
@@ -189,6 +239,68 @@ export default function LabourHoursPage() {
         </p>
       </div>
 
+      {!loading && (
+        <div className="card space-y-4">
+          <div>
+            <h2 className="font-semibold">Weekly totals by labour</h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Hours and allocated amount (hours × rate) for {weekStart && weekEnd ? `${formatDate(weekStart)} – ${formatDate(weekEnd)}` : 'this week'}
+            </p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="rounded-lg bg-indigo-50 px-3 py-2">
+              <p className="text-xs text-indigo-700">Working days</p>
+              <p className="font-semibold text-indigo-900">{totals.days}</p>
+            </div>
+            <div className="rounded-lg bg-indigo-50 px-3 py-2">
+              <p className="text-xs text-indigo-700">Total labour hours</p>
+              <p className="font-semibold text-indigo-900">{formatDuration(totals.hours)}</p>
+            </div>
+            <div className="rounded-lg bg-indigo-50 px-3 py-2">
+              <p className="text-xs text-indigo-700">Total allocated</p>
+              <p className="font-semibold text-indigo-900">{formatCurrency(totals.amount)}</p>
+            </div>
+          </div>
+          {workedRows.length === 0 ? (
+            <p className="text-sm text-gray-400">No hours entered for this week yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 text-gray-500">
+                  <tr>
+                    <th className="text-left p-3">Labour</th>
+                    <th className="text-right p-3">Days</th>
+                    <th className="text-right p-3">Hours</th>
+                    <th className="text-right p-3">Allocated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {workedRows.map((row) => (
+                    <tr key={row.employeeId} className="border-t">
+                      <td className="p-3">
+                        <div className="font-medium">{row.name}</div>
+                        <div className="text-xs font-mono text-gray-500">{row.employeeCode}</div>
+                      </td>
+                      <td className="p-3 text-right">{num(row.workedDays) || '—'}</td>
+                      <td className="p-3 text-right font-medium">{formatDuration(row.decimalHours)}</td>
+                      <td className="p-3 text-right font-semibold">{row.amount > 0 ? formatCurrency(row.amount) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t bg-gray-50 font-medium">
+                    <td className="p-3">Week total</td>
+                    <td className="p-3 text-right">{totals.days}</td>
+                    <td className="p-3 text-right">{formatDuration(totals.hours)}</td>
+                    <td className="p-3 text-right">{formatCurrency(totals.amount)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
       <form id="labour-hours-form" onSubmit={handleSubmit} className="card overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 text-gray-500">
@@ -196,7 +308,8 @@ export default function LabourHoursPage() {
               <th className="text-left p-3">Labour</th>
               <th className="text-left p-3">Job title</th>
               <th className="text-left p-3 w-28">Worked days</th>
-              <th className="text-left p-3 w-28">Hours</th>
+              <th className="text-left p-3 w-24">Hours</th>
+              <th className="text-left p-3 w-24">Minutes</th>
               <th className="text-left p-3 w-32">Hourly rate</th>
               <th className="text-left p-3">Amount</th>
               <th className="text-left p-3">Notes</th>
@@ -205,16 +318,16 @@ export default function LabourHoursPage() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={8} className="p-6 text-center text-gray-400">Loading...</td></tr>
+              <tr><td colSpan={9} className="p-6 text-center text-gray-400">Loading...</td></tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={8} className="p-6 text-center text-gray-400">
+                <td colSpan={9} className="p-6 text-center text-gray-400">
                   No employees yet. Register labours on the{' '}
                   <Link to="/employees" className="text-brand-600 hover:underline">Employees</Link> page first.
                 </td>
               </tr>
             ) : rows.map((row) => {
-              const amount = num(row.hours) * num(row.hourlyRate);
+              const amount = combineHours(row.hours, row.minutes) * num(row.hourlyRate);
               return (
                 <tr key={row.employeeId} className="border-t">
                   <td className="p-3">
@@ -239,10 +352,23 @@ export default function LabourHoursPage() {
                       type="number"
                       min="0"
                       max="168"
-                      step="0.25"
+                      step="1"
                       className="input"
+                      placeholder="0"
                       value={row.hours}
                       onChange={(e) => updateRow(row.employeeId, { hours: e.target.value })}
+                    />
+                  </td>
+                  <td className="p-3">
+                    <input
+                      type="number"
+                      min="0"
+                      max="59"
+                      step="1"
+                      className="input"
+                      placeholder="0"
+                      value={row.minutes}
+                      onChange={(e) => updateRow(row.employeeId, { minutes: e.target.value })}
                     />
                   </td>
                   <td className="p-3">
@@ -266,7 +392,7 @@ export default function LabourHoursPage() {
                     />
                   </td>
                   <td className="p-3">
-                    {(row.entryId || row.hours || row.workedDays) && (
+                    {(row.entryId || row.hours || row.minutes || row.workedDays) && (
                       <button type="button" className="text-red-600 hover:text-red-800 inline-flex" onClick={() => handleClear(row)} title="Clear hours">
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -281,7 +407,7 @@ export default function LabourHoursPage() {
               <tr className="border-t bg-gray-50 font-medium">
                 <td className="p-3" colSpan={2}>Week total</td>
                 <td className="p-3">{totals.days}</td>
-                <td className="p-3">{totals.hours.toFixed(2)}</td>
+                <td className="p-3" colSpan={2}>{formatDuration(totals.hours)}</td>
                 <td className="p-3" />
                 <td className="p-3">{formatCurrency(totals.amount)}</td>
                 <td className="p-3" colSpan={2} />

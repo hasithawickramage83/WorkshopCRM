@@ -387,6 +387,7 @@ export class WhatsAppService {
   buildLeadCreatedMessage(input: {
     leadCode?: string;
     customerName: string;
+    vehicleNo?: string | null;
     phone?: string | null;
     source?: string | null;
     estimatedPrice?: number | null;
@@ -396,6 +397,7 @@ export class WhatsAppService {
       '📋 New Lead',
       input.leadCode ? `Lead: ${input.leadCode}` : null,
       `Customer: ${input.customerName}`,
+      input.vehicleNo?.trim() ? `Vehicle: ${input.vehicleNo.trim()}` : null,
       input.phone ? `Phone: ${input.phone}` : null,
       input.source ? `Source: ${String(input.source).replace(/_/g, ' ')}` : null,
       typeof input.estimatedPrice === 'number' ? `Est. Amount: ${formatNzd(input.estimatedPrice)}` : null,
@@ -456,6 +458,7 @@ export class WhatsAppService {
   notifyLeadCreated(lead: {
     leadCode?: string;
     customerName?: string | null;
+    vehicleNo?: string | null;
     phone?: string | null;
     source?: string | null;
     estimatedPrice?: number | null;
@@ -465,6 +468,7 @@ export class WhatsAppService {
     const text = this.buildLeadCreatedMessage({
       leadCode: lead.leadCode,
       customerName: lead.customerName?.trim() || 'Unknown',
+      vehicleNo: lead.vehicleNo,
       phone: lead.phone,
       source: lead.source,
       estimatedPrice: lead.estimatedPrice ?? null,

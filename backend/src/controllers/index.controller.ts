@@ -18,9 +18,17 @@ import { backupService } from '../services/backup.service';
 import { supplierService } from '../services/supplier.service';
 import { employeeService } from '../services/employee.service';
 import { labourHoursService } from '../services/labour-hours.service';
+import { labourTasksService } from '../services/labour-tasks.service';
+import { winzQuoteService } from '../services/winz-quote.service';
+import { returnJobsService } from '../services/return-jobs.service';
 
 const uid = (req: AuthRequest) => req.user?.userId;
 const paramId = (req: AuthRequest) => req.params.id as string;
+const actor = (req: AuthRequest) => ({
+  userId: req.user?.userId,
+  role: req.user?.role,
+  pages: req.user?.pages,
+});
 
 export const customerController = {
   list: asyncHandler(async (req: AuthRequest, res: Response) => {
@@ -59,6 +67,9 @@ export const supplierController = {
 };
 
 export const employeeController = {
+  listUsers: asyncHandler(async (_req: AuthRequest, res: Response) => {
+    sendSuccess(res, await employeeService.listUsers());
+  }),
   list: asyncHandler(async (req: AuthRequest, res: Response) => {
     sendSuccess(res, await employeeService.list(req.query as never));
   }),
@@ -73,6 +84,28 @@ export const employeeController = {
   }),
   delete: asyncHandler(async (req: AuthRequest, res: Response) => {
     sendSuccess(res, await employeeService.delete(paramId(req), uid(req)));
+  }),
+};
+
+export const labourTasksController = {
+  listLabours: asyncHandler(async (req: AuthRequest, res: Response) => {
+    sendSuccess(res, await labourTasksService.listLabours(actor(req)));
+  }),
+  list: asyncHandler(async (req: AuthRequest, res: Response) => {
+    sendSuccess(res, await labourTasksService.list(
+      req.query.employeeId as string | undefined,
+      req.query.workDate as string | undefined,
+      actor(req),
+    ));
+  }),
+  createBatch: asyncHandler(async (req: AuthRequest, res: Response) => {
+    sendSuccess(res, await labourTasksService.createBatch(req.body, uid(req), actor(req)), 201);
+  }),
+  update: asyncHandler(async (req: AuthRequest, res: Response) => {
+    sendSuccess(res, await labourTasksService.update(paramId(req), req.body, uid(req), actor(req)));
+  }),
+  delete: asyncHandler(async (req: AuthRequest, res: Response) => {
+    sendSuccess(res, await labourTasksService.delete(paramId(req), actor(req)));
   }),
 };
 
@@ -154,7 +187,17 @@ export const jobController = {
     sendSuccess(res, await jobService.update(paramId(req), req.body, uid(req)));
   }),
   updateStatus: asyncHandler(async (req: AuthRequest, res: Response) => {
-    sendSuccess(res, await jobService.updateStatus(paramId(req), req.body.status, req.body.notes, uid(req)));
+    sendSuccess(res, await jobService.updateStatus(paramId(req), req.body.status, req.body.notes, uid(req), req.body.actionAt));
+  }),
+  updateStatusHistory: asyncHandler(async (req: AuthRequest, res: Response) => {
+    sendSuccess(res, await jobService.updateStatusHistory(
+      paramId(req),
+      req.params.historyId as string,
+      req.body.status,
+      req.body.notes,
+      req.body.actionAt,
+      uid(req),
+    ));
   }),
   delete: asyncHandler(async (req: AuthRequest, res: Response) => {
     sendSuccess(res, await jobService.delete(paramId(req), req.body.remarks, uid(req)));
@@ -215,6 +258,39 @@ export const insuranceController = {
   }),
   delete: asyncHandler(async (req: AuthRequest, res: Response) => {
     sendSuccess(res, await insuranceService.delete(paramId(req), uid(req)));
+  }),
+};
+
+export const returnJobsController = {
+  list: asyncHandler(async (req: AuthRequest, res: Response) => {
+    sendSuccess(res, await returnJobsService.list(req.query as never));
+  }),
+  create: asyncHandler(async (req: AuthRequest, res: Response) => {
+    sendSuccess(res, await returnJobsService.create(req.body, uid(req)), 201);
+  }),
+  update: asyncHandler(async (req: AuthRequest, res: Response) => {
+    sendSuccess(res, await returnJobsService.update(paramId(req), req.body, uid(req)));
+  }),
+  delete: asyncHandler(async (req: AuthRequest, res: Response) => {
+    sendSuccess(res, await returnJobsService.delete(paramId(req), uid(req)));
+  }),
+};
+
+export const winzQuoteController = {
+  list: asyncHandler(async (req: AuthRequest, res: Response) => {
+    sendSuccess(res, await winzQuoteService.list(req.query as never));
+  }),
+  get: asyncHandler(async (req: AuthRequest, res: Response) => {
+    sendSuccess(res, await winzQuoteService.getById(paramId(req)));
+  }),
+  create: asyncHandler(async (req: AuthRequest, res: Response) => {
+    sendSuccess(res, await winzQuoteService.create(req.body, uid(req)), 201);
+  }),
+  update: asyncHandler(async (req: AuthRequest, res: Response) => {
+    sendSuccess(res, await winzQuoteService.update(paramId(req), req.body, uid(req)));
+  }),
+  delete: asyncHandler(async (req: AuthRequest, res: Response) => {
+    sendSuccess(res, await winzQuoteService.delete(paramId(req), uid(req)));
   }),
 };
 
@@ -376,6 +452,12 @@ export const reportController = {
     }
     sendSuccess(res, result.content);
   }),
+  workshopPeriod: asyncHandler(async (req: AuthRequest, res: Response) => {
+    sendSuccess(res, await financeReportService.workshopReport(
+      req.query.from as string | undefined,
+      req.query.to as string | undefined,
+    ));
+  }),
 };
 
 export const attendanceController = {
@@ -471,6 +553,12 @@ export const financeController = {
   }),
   periodReport: asyncHandler(async (req: AuthRequest, res: Response) => {
     sendSuccess(res, await financeReportService.periodReport(
+      req.query.from as string | undefined,
+      req.query.to as string | undefined,
+    ));
+  }),
+  workshopReport: asyncHandler(async (req: AuthRequest, res: Response) => {
+    sendSuccess(res, await financeReportService.workshopReport(
       req.query.from as string | undefined,
       req.query.to as string | undefined,
     ));

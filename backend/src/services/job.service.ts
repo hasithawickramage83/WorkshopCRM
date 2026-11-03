@@ -7,6 +7,15 @@ import {
 } from '@prisma/client';
 import { SubTaskInput, sumSubTaskPrices } from '../utils/job-subtasks';
 
+function parseActionDate(value?: string) {
+  const raw = value?.trim() || '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    throw new AppError(400, 'Action date is required', 'ACTION_DATE_REQUIRED');
+  }
+  const [year, month, day] = raw.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+}
+
 type JobInput = {
   customerId?: string;
   vehicleId?: string;
@@ -93,6 +102,8 @@ export class JobService {
           { customer: { name: { contains: query.search, mode: 'insensitive' } } },
           { customer: { phone: { contains: query.search, mode: 'insensitive' } } },
           { vehicle: { registrationNo: { contains: query.search, mode: 'insensitive' } } },
+          { vehicle: { make: { contains: query.search, mode: 'insensitive' } } },
+          { vehicle: { model: { contains: query.search, mode: 'insensitive' } } },
         ],
       }),
     };
@@ -191,7 +202,7 @@ export class JobService {
     return created;
   }
 
-  async updateStatus(id: string, status: JobStatus, notes: string, userId?: string) {
+  async updateStatus(id: string, status: JobStatus, notes: string, userId?: string, actionAt?: string) {
     const job = await this.getById(id);
 
     if (job.status === status) {
@@ -201,6 +212,8 @@ export class JobService {
     if (!notes?.trim()) {
       throw new AppError(400, 'Remark is required when changing job status', 'REMARK_REQUIRED');
     }
+
+    const actionDate = parseActionDate(actionAt);
 
     const updated = await prisma.job.update({
       where: { id },
@@ -218,11 +231,55 @@ export class JobService {
         fromStatus: job.status,
         toStatus: status,
         notes: notes.trim(),
+        actionAt: actionDate,
         changedById: userId,
       },
     });
 
     return updated;
+  }
+
+  async updateStatusHistory(
+    jobId: string,
+    historyId: string,
+    status: JobStatus,
+    notes: string,
+    actionAt: string | undefined,
+    userId?: string,
+  ) {
+    await this.getById(jobId);
+    const entry = await prisma.jobStatusHistory.findFirst({
+      where: { id: historyId, jobId },
+    });
+    if (!entry) throw new AppError(404, 'Status action not found', 'NOT_FOUND');
+    if (!notes?.trim()) {
+      throw new AppError(400, 'Remark is required when editing a status action', 'REMARK_REQUIRED');
+    }
+
+    const actionDate = parseActionDate(actionAt);
+    const latest = await prisma.jobStatusHistory.findFirst({
+      where: { jobId },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    await prisma.$transaction(async (tx) => {
+      await tx.jobStatusHistory.update({
+        where: { id: historyId },
+        data: {
+          toStatus: status,
+          notes: notes.trim(),
+          actionAt: actionDate,
+        },
+      });
+      if (latest?.id === historyId) {
+        await tx.job.update({
+          where: { id: jobId },
+          data: { status, updatedById: userId },
+        });
+      }
+    });
+
+    return this.getById(jobId);
   }
 
   async update(id: string, data: JobInput, userId?: string) {

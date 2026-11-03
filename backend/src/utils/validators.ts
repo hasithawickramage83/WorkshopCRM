@@ -1,15 +1,12 @@
 import { z } from 'zod';
+import { ALL_PAGE_KEYS, type PageKey } from './pages';
 
 export const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
 });
 
-const pageKeySchema = z.enum([
-  'dashboard', 'customers', 'vehicles', 'leads', 'jobs', 'register',
-  'inventory', 'parts-sales', 'insurance', 'quotations', 'invoices',
-  'finance', 'out-vehicles', 'ai', 'reports', 'attendance', 'users',
-]);
+const pageKeySchema = z.enum(ALL_PAGE_KEYS as [PageKey, ...PageKey[]]);
 
 export const registerSchema = z.object({
   email: z.string().email(),
@@ -22,6 +19,7 @@ export const registerSchema = z.object({
 });
 
 export const updateUserSchema = z.object({
+  email: z.string().email().optional(),
   firstName: z.string().min(1).optional(),
   lastName: z.string().min(1).optional(),
   phone: z.string().nullable().optional(),
@@ -62,9 +60,20 @@ export const jobTypeEnum = z.enum([
 export const jobCategoryEnum = z.enum(['DEALER', 'NON_DEALER', 'BUSINESS']);
 
 export const jobSubTaskTypeEnum = z.enum([
-  'PAINTING', 'INSTALLATION', 'PARTS', 'PANEL_BEATING', 'MECHANICAL', 'ELECTRICAL',
-  'LABOUR', 'BODY_WORK', 'TYRES', 'OTHER',
+  'PAINTING', 'SANDING', 'POLISH', 'PARKING', 'CLEANING', 'INSTALLATION', 'PARTS',
+  'PANEL_BEATING', 'MECHANICAL', 'ELECTRICAL', 'LABOUR', 'BODY_WORK', 'TYRES', 'OTHER',
 ]);
+
+const clockTimeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Start and end time are required');
+
+function minutesBetweenTimes(startTime: string, endTime: string) {
+  const [startHour, startMinute] = startTime.split(':').map(Number);
+  const [endHour, endMinute] = endTime.split(':').map(Number);
+  let start = startHour * 60 + startMinute;
+  let end = endHour * 60 + endMinute;
+  if (end <= start) end += 24 * 60;
+  return end - start;
+}
 
 export const jobSubTaskSchema = z.object({
   taskType: jobSubTaskTypeEnum,
@@ -105,6 +114,7 @@ export const vehicleSchema = z.object({
 
 export const leadSchema = z.object({
   customerName: z.string().min(1),
+  vehicleNo: z.string().trim().min(1),
   company: businessCompanyEnum.optional(),
   companyName: z.string().optional(),
   phone: z.string().optional(),
@@ -162,6 +172,12 @@ export const jobStatusSchema = z.object({
     'COMPLETED', 'INVOICED', 'CLOSED',
   ]),
   notes: z.string().min(1, 'Remark is required for status change'),
+  actionAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Action date is required'),
+});
+
+export const jobHistoryParamSchema = z.object({
+  id: z.string().uuid(),
+  historyId: z.string().uuid(),
 });
 
 export const softDeleteJobSchema = z.object({
@@ -288,13 +304,49 @@ export const employeeSchema = z.object({
   notes: z.string().max(1000).optional().nullable(),
   hourlyRate: z.number().min(0).max(10000).optional().nullable(),
   isActive: z.boolean().optional(),
+  userId: z.union([z.string().uuid(), z.literal('')]).optional().nullable(),
+});
+
+const labourTaskLineSchema = z.object({
+  taskType: jobSubTaskTypeEnum,
+  otherLabel: z.string().max(200).optional().nullable(),
+  description: z.string().max(1000).optional().default(''),
+  startTime: clockTimeSchema,
+  endTime: clockTimeSchema,
+}).refine((row) => minutesBetweenTimes(row.startTime, row.endTime) > 0, {
+  message: 'End time must be after start time',
+}).refine((row) => row.taskType !== 'OTHER' || !!(row.otherLabel && row.otherLabel.trim()), {
+  message: 'Specify the other task',
+  path: ['otherLabel'],
+});
+
+export const labourTasksBatchSchema = z.object({
+  employeeId: z.string().uuid(),
+  jobId: z.string().uuid(),
+  workDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  tasks: z.array(labourTaskLineSchema).min(1).max(50),
+});
+
+export const updateLabourTaskSchema = z.object({
+  taskType: jobSubTaskTypeEnum,
+  otherLabel: z.string().max(200).optional().nullable(),
+  description: z.string().max(1000).optional().default(''),
+  startTime: clockTimeSchema,
+  endTime: clockTimeSchema,
+  workDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+}).refine((row) => minutesBetweenTimes(row.startTime, row.endTime) > 0, {
+  message: 'End time must be after start time',
+}).refine((row) => row.taskType !== 'OTHER' || !!(row.otherLabel && row.otherLabel.trim()), {
+  message: 'Specify the other task',
+  path: ['otherLabel'],
 });
 
 export const labourHoursWeekSchema = z.object({
   weekStart: z.string().min(1),
   rows: z.array(z.object({
     employeeId: z.string().uuid(),
-    hours: z.number().min(0).max(168),
+    hours: z.coerce.number().min(0).max(168),
+    minutes: z.coerce.number().int().min(0).max(59).optional().default(0),
     workedDays: z.number().int().min(0).max(7).optional().default(0),
     hourlyRate: z.number().min(0).max(10000).optional().nullable(),
     notes: z.string().max(1000).optional().nullable(),
@@ -374,6 +426,27 @@ export const updateQuotationSchema = z.object({
   items: z.array(quotationItemSchema).optional(),
 });
 
+export const winzQuoteItemSchema = z.object({
+  kind: z.enum(['HEADING', 'ITEM']).optional(),
+  description: z.string().min(1),
+  quantity: z.number().min(0).optional(),
+  unitPrice: z.number().min(0).optional(),
+});
+
+export const winzQuoteSchema = z.object({
+  customerName: z.string().min(1),
+  vehicleRego: z.string().min(1),
+  quoteDate: z.string().min(1),
+  expiryDate: z.string().min(1),
+  notes: z.string().optional(),
+  terms: z.string().optional(),
+  items: z.array(winzQuoteItemSchema).min(1),
+});
+
+export const updateWinzQuoteSchema = winzQuoteSchema.partial().extend({
+  items: z.array(winzQuoteItemSchema).min(1).optional(),
+});
+
 export const inventoryItemSchema = z.object({
   itemName: z.string().min(1),
   company: businessCompanyEnum.optional(),
@@ -443,10 +516,25 @@ export const outVehicleMarkSchema = z.object({
   outInvoiceNumber: z.string().max(100).optional().nullable(),
   outNotes: z.string().max(1000).optional().nullable(),
   markCompleted: z.boolean().optional(),
+  jobClosedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable().or(z.literal('')),
 });
 
 export const outVehicleUpdateSchema = outVehicleMarkSchema.partial().extend({
   clearOut: z.boolean().optional(),
+});
+
+export const jobReturnSchema = z.object({
+  jobId: z.string().uuid(),
+  returnedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  reason: z.string().trim().min(1).max(500),
+  notes: z.string().trim().max(2000).optional().nullable(),
+});
+
+export const updateJobReturnSchema = z.object({
+  returnedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  reason: z.string().trim().min(1).max(500).optional(),
+  notes: z.string().trim().max(2000).optional().nullable(),
+  status: z.enum(['OPEN', 'DONE']).optional(),
 });
 
 export const attendancePunchSchema = z.object({

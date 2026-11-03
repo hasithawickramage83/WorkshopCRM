@@ -17,6 +17,7 @@ interface OutJob {
   jobAmount?: number;
   isOut?: boolean;
   outDate?: string | null;
+  jobClosedDate?: string | null;
   outInvoiceType?: 'TAX' | 'CASH' | null;
   outInvoiceNumber?: string | null;
   outNotes?: string | null;
@@ -72,6 +73,7 @@ export default function OutVehiclesPage() {
   const [editing, setEditing] = useState<OutJob | null>(null);
   const [form, setForm] = useState({
     outDate: toInputDate(),
+    jobClosedDate: '',
     outInvoiceType: 'TAX',
     outInvoiceNumber: '',
     outNotes: '',
@@ -126,6 +128,7 @@ export default function OutVehiclesPage() {
     setEditing(job);
     setForm({
       outDate: job.outDate ? job.outDate.slice(0, 10) : toInputDate(),
+      jobClosedDate: job.jobClosedDate ? job.jobClosedDate.slice(0, 10) : '',
       outInvoiceType: job.outInvoiceType || 'TAX',
       outInvoiceNumber: job.outInvoiceNumber || job.invoice?.invoiceNumber || '',
       outNotes: job.outNotes || '',
@@ -140,6 +143,7 @@ export default function OutVehiclesPage() {
     setError('');
     const payload = {
       outDate: form.outDate,
+      jobClosedDate: form.jobClosedDate || null,
       outInvoiceType: form.outInvoiceType,
       outInvoiceNumber: form.outInvoiceNumber.trim() || null,
       outNotes: form.outNotes.trim() || null,
@@ -311,6 +315,7 @@ export default function OutVehiclesPage() {
               <th className="text-left p-3">Received</th>
               <th className="text-right p-3">Amount</th>
               <th className="text-left p-3">Out date</th>
+              <th className="text-left p-3">Job closed</th>
               <th className="text-left p-3">Invoice</th>
               <th className="text-left p-3">Status</th>
               <th className="p-3" />
@@ -319,7 +324,7 @@ export default function OutVehiclesPage() {
           <tbody>
             {jobs.length === 0 ? (
               <tr>
-                <td colSpan={10} className="p-6 text-center text-gray-400">
+                <td colSpan={11} className="p-6 text-center text-gray-400">
                   {loading
                     ? 'Loading...'
                     : view === 'out'
@@ -349,6 +354,7 @@ export default function OutVehiclesPage() {
                     {(job.jobAmount || 0) > 0 ? formatCurrency(job.jobAmount || 0) : '—'}
                   </td>
                   <td className="p-3">{job.outDate ? formatDate(job.outDate) : '—'}</td>
+                  <td className="p-3">{job.jobClosedDate ? formatDate(job.jobClosedDate) : '—'}</td>
                   <td className="p-3">
                     {job.outInvoiceType
                       ? (
@@ -365,7 +371,11 @@ export default function OutVehiclesPage() {
                   </td>
                   <td className="p-3">
                     <span className={isOut ? 'text-green-800 font-medium' : ''}>
-                      {isOut ? 'Out' : formatStatus(job.status)}
+                      {isOut && job.status === 'CLOSED'
+                        ? 'Out · Closed'
+                        : isOut
+                          ? 'Out'
+                          : formatStatus(job.status)}
                     </span>
                   </td>
                   <td className="p-3 whitespace-nowrap">
@@ -443,6 +453,16 @@ export default function OutVehiclesPage() {
                   value={form.outDate}
                   onChange={(e) => setForm({ ...form, outDate: e.target.value })}
                 />
+              </div>
+              <div>
+                <label className="label">Job closed date</label>
+                <input
+                  type="date"
+                  className="input"
+                  value={form.jobClosedDate}
+                  onChange={(e) => setForm({ ...form, jobClosedDate: e.target.value })}
+                />
+                <p className="text-xs text-gray-500 mt-1">If set, the job is marked Closed on Jobs with this date.</p>
               </div>
               <div>
                 <label className="label">Invoice type *</label>

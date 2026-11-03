@@ -8,11 +8,13 @@ import CustomersPage from './pages/CustomersPage';
 import SuppliersPage from './pages/SuppliersPage';
 import EmployeesPage from './pages/EmployeesPage';
 import LabourHoursPage from './pages/LabourHoursPage';
+import LabourTasksPage from './pages/LabourTasksPage';
 import VehiclesPage from './pages/VehiclesPage';
 import LeadsPage from './pages/LeadsPage';
 import JobsPage from './pages/JobsPage';
 import InsurancePage from './pages/InsurancePage';
 import QuotationsPage from './pages/QuotationsPage';
+import WinzQuotesPage from './pages/WinzQuotesPage';
 import InvoicesPage from './pages/InvoicesPage';
 import FinancePage from './pages/FinancePage';
 import AIPage from './pages/AIPage';
@@ -25,6 +27,7 @@ import CustomerLoginPage from './pages/CustomerLoginPage';
 import CustomerPortalPage from './pages/CustomerPortalPage';
 import JobRegistrationPage from './pages/JobRegistrationPage';
 import OutVehiclesPage from './pages/OutVehiclesPage';
+import ReturnJobsPage from './pages/ReturnJobsPage';
 import WhatsAppPage from './pages/WhatsAppPage';
 import { Loader2 } from 'lucide-react';
 import type { PageKey } from './lib/pages';
@@ -86,6 +89,19 @@ function CustomerProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function FallbackRoute() {
+  const { user, loading, firstAccessiblePath } = useAuth();
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-brand-600" />
+      </div>
+    );
+  }
+  if (!user) return <Navigate to="/login" replace />;
+  return <Navigate to={firstAccessiblePath()} replace />;
+}
+
 function StaffRoutes() {
   return (
     <Routes>
@@ -95,14 +111,17 @@ function StaffRoutes() {
       <Route path="/suppliers" element={<ProtectedRoute page="suppliers"><SuppliersPage /></ProtectedRoute>} />
       <Route path="/employees" element={<ProtectedRoute page="employees"><EmployeesPage /></ProtectedRoute>} />
       <Route path="/labour-hours" element={<ProtectedRoute page="labour-hours"><LabourHoursPage /></ProtectedRoute>} />
+      <Route path="/labour-tasks" element={<ProtectedRoute page="labour-tasks"><LabourTasksPage /></ProtectedRoute>} />
       <Route path="/vehicles" element={<ProtectedRoute page="vehicles"><VehiclesPage /></ProtectedRoute>} />
       <Route path="/leads" element={<ProtectedRoute page="leads"><LeadsPage /></ProtectedRoute>} />
       <Route path="/jobs" element={<ProtectedRoute page="jobs"><JobsPage /></ProtectedRoute>} />
       <Route path="/out-vehicles" element={<ProtectedRoute page="out-vehicles"><OutVehiclesPage /></ProtectedRoute>} />
+      <Route path="/return-jobs" element={<ProtectedRoute page="return-jobs"><ReturnJobsPage /></ProtectedRoute>} />
       <Route path="/inventory" element={<ProtectedRoute page="inventory"><InventoryPage /></ProtectedRoute>} />
       <Route path="/parts-sales" element={<ProtectedRoute page="parts-sales"><PartsSalesPage /></ProtectedRoute>} />
       <Route path="/insurance" element={<ProtectedRoute page="insurance"><InsurancePage /></ProtectedRoute>} />
       <Route path="/quotations" element={<ProtectedRoute page="quotations"><QuotationsPage /></ProtectedRoute>} />
+      <Route path="/winz-quotes" element={<ProtectedRoute page="winz-quotes"><WinzQuotesPage /></ProtectedRoute>} />
       <Route path="/invoices" element={<ProtectedRoute page="invoices"><InvoicesPage /></ProtectedRoute>} />
       <Route path="/finance" element={<ProtectedRoute page="finance"><FinancePage /></ProtectedRoute>} />
       <Route path="/ai" element={<ProtectedRoute page="ai"><AIPage /></ProtectedRoute>} />
@@ -110,7 +129,7 @@ function StaffRoutes() {
       <Route path="/attendance" element={<ProtectedRoute page="attendance"><AttendancePage /></ProtectedRoute>} />
       <Route path="/whatsapp" element={<ProtectedRoute page="whatsapp"><WhatsAppPage /></ProtectedRoute>} />
       <Route path="/users" element={<ProtectedRoute page="users"><UsersPage /></ProtectedRoute>} />
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="*" element={<FallbackRoute />} />
     </Routes>
   );
 }
